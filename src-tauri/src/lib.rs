@@ -94,6 +94,35 @@ async fn download_version(
     state: State<'_, DownloadState>,
     version_id: String,
 ) -> Result<download::DownloadResult, String> {
+    run_install(app, &state, &version_id, false).await
+}
+
+/// 检查并补全游戏文件：使用本地版本 json，只下载缺失/损坏的文件（复用下载对话框与进度事件）。
+#[tauri::command]
+async fn repair_version(
+    app: tauri::AppHandle,
+    state: State<'_, DownloadState>,
+    version_id: String,
+) -> Result<download::DownloadResult, String> {
+    run_install(app, &state, &version_id, true).await
+}
+
+/// 完整性预检（存在性 + 大小）。
+#[tauri::command]
+async fn check_version_files(version_id: String) -> Result<download::IntegrityReport, String> {
+    let s = config::load_settings();
+    let dir = config::resolve_game_dir(&s);
+    tauri::async_runtime::spawn_blocking(move || download::check_version_files(&dir, &version_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+async fn run_install(
+    app: tauri::AppHandle,
+    state: &DownloadState,
+    version_id: &str,
+    repair: bool,
+) -> Result<download::DownloadResult, String> {
     let cancel = {
         let mut slot = state.cancel.lock().unwrap();
         if slot.is_some() {
@@ -109,10 +138,11 @@ async fn download_version(
         let _ = app.emit("download-progress", ev);
     });
     let r = download::install_version(
-        &version_id,
+        version_id,
         &s.download_source,
         &dir,
         s.download_concurrency as usize,
+        repair,
         cancel,
         emit,
     )
@@ -258,6 +288,8 @@ pub fn run() {
             list_remote_versions,
             list_local_versions,
             download_version,
+            repair_version,
+            check_version_files,
             cancel_download,
             rename_version,
             delete_version,
