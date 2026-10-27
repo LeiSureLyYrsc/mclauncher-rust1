@@ -14,7 +14,7 @@ jobs:
         include:
           - platform: windows-latest
             args: --bundles nsis,msi
-          - platform: ubuntu-latest
+          - platform: ubuntu-22.04
             args: --bundles appimage,deb
           - platform: macos-latest
             args: --bundles app,dmg
@@ -22,42 +22,70 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch UI assets
+      - name: Fetch UI assets (melody-launcher raw)
+        shell: bash
         run: bash scripts/fetch-assets.sh
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: 20
-          cache: npm
+          python-version: "3.12"
 
-      - name: Install frontend deps
-        run: npm ci || npm install
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Linux dependencies
-        if: matrix.platform == 'ubuntu-latest'
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Build Tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Generate app icons
+        shell: bash
+        run: |
+          python -m pip install --quiet pillow
+          python scripts/gen-icons.py
+          npx tauri icon src-tauri/icons/app-icon.png
+
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          B=src-tauri/target/release
+          case "${{ matrix.platform }}" in
+            windows-*)
+              cp "$B/mclauncher-rust1.exe" out/MCLauncher-portable-windows-x64.exe
+              cp $B/bundle/nsis/*.exe out/ || true
+              cp $B/bundle/msi/*.msi out/ || true ;;
+            ubuntu-*)
+              cp $B/bundle/appimage/*.AppImage out/ || true
+              cp $B/bundle/deb/*.deb out/ || true
+              cp "$B/mclauncher-rust1" out/MCLauncher-linux-x64 || true ;;
+            macos-*)
+              cp $B/bundle/dmg/*.dmg out/ || true
+              (cd $B/bundle/macos && zip -qry "$GITHUB_WORKSPACE/out/MCLauncher-macos.app.zip" *.app) || true ;;
+          esac
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
         with:
           name: mclauncher-${{ matrix.platform }}
-          path: |
-            src-tauri/target/release/bundle/**
-            src-tauri/target/release/mclauncher-rust1.exe
-            src-tauri/target/release/mclauncher-rust1
-            src-tauri/target/release/MCLauncher.exe
-            src-tauri/target/release/MCLauncher
-          if-no-files-found: warn
+          path: out/*
+          if-no-files-found: error

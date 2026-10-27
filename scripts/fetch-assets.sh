@@ -33,14 +33,4 @@ fetch ui/checkbox_on_hover.png
 fetch ui/chevron.png
 fetch icons/app.ico
 
-# Tauri icons from ico if convert available
-if command -v convert >/dev/null 2>&1; then
-  mkdir -p "$ROOT/src-tauri/icons"
-  convert "$DEST/icons/app.ico[0]" -resize 32x32 "$ROOT/src-tauri/icons/32x32.png" || true
-  convert "$DEST/icons/app.ico[0]" -resize 128x128 "$ROOT/src-tauri/icons/128x128.png" || true
-  convert "$DEST/icons/app.ico[0]" -resize 256x256 "$ROOT/src-tauri/icons/henry.w@example.net" || true
-  convert "$DEST/icons/app.ico[0]" -resize 512x512 "$ROOT/src-tauri/icons/icon.png" || true
-  cp -f "$DEST/icons/app.ico" "$ROOT/src-tauri/icons/icon.ico" || true
-fi
-
 echo "assets ready under $DEST"
