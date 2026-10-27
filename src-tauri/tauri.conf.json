@@ -16,13 +16,17 @@
         "title": "MCLauncher",
         "width": 720,
         "height": 450,
-        "resizable": false,
-        "maximizable": false,
+        "resizable": true,
+        "maximizable": true,
         "fullscreen": false,
         "decorations": false,
         "transparent": true,
         "center": true,
-        "shadow": false
+        "shadow": false,
+        "label": "main",
+        "minimizable": true,
+        "minWidth": 720,
+        "minHeight": 450
       }
     ],
     "security": {

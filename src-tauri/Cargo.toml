@@ -31,6 +31,8 @@ which = "6"
 thiserror = "1"
 futures-util = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+base64 = "0.22"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
