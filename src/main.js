@@ -66,7 +66,7 @@ const state = {
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
-function xIcon(size = 12, color = "#E6FFFFFF") {
+function xIcon(size = 12, color = "rgba(255,255,255,0.902)") {
   return `<svg width="${size}" height="${size}" viewBox="0 0 12 12">
     <path d="M0,0 L12,12 M12,0 L0,12" stroke="${color}" stroke-width="2" fill="none"/>
   </svg>`;
@@ -85,7 +85,7 @@ function renderApp() {
       <button class="btn btn-text no-drag" id="btnVersionSettings">版本设置</button>
       <div class="main-status" id="mainStatus"></div>
       <div class="credit">MineCraft Launcher 5.31 by 忘却的旋律</div>
-      <button class="btn-close-win no-drag" id="btnClose" title="关闭">${xIcon(12, "#E6FFFFFF")}</button>
+      <button class="btn-close-win no-drag" id="btnClose" title="关闭">${xIcon(12, "rgba(255,255,255,0.902)")}</button>
     </div>
 
     <div class="ctx-menu" id="ctxMenu">
@@ -195,7 +195,7 @@ function showOverlay(name) {
 function panelShell(inner) {
   return `
     <div class="overlay-panel">
-      <button class="overlay-close" id="ovClose">${xIcon(11, "#F2FFFFFF")}</button>
+      <button class="overlay-close" id="ovClose">${xIcon(11, "rgba(255,255,255,0.949)")}</button>
       ${inner}
     </div>`;
 }
@@ -401,7 +401,7 @@ async function showDownload() {
   page.innerHTML = `
     <div class="content-card" style="background-image:url('/assets/backgrounds/main.png');opacity:0.35;filter:blur(0px);"></div>
     <div class="dl-titlebar"></div>
-    <button class="btn-close-win no-drag" id="dlClose" style="z-index:2;">${xIcon(12, "#E6FFFFFF")}</button>
+    <button class="btn-close-win no-drag" id="dlClose" style="z-index:2;">${xIcon(12, "rgba(255,255,255,0.902)")}</button>
     <div class="dl-card">
       <div class="dl-head">
         <span style="width:50px;">类型</span>
