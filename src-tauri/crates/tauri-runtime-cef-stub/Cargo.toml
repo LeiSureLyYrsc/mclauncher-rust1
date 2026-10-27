@@ -1,0 +1,11 @@
+# Stand-in for tauri-runtime-cef outside the Linux CEF build.
+# Real crate lives on readest/tauri feat/cef; .cargo/cef.toml patches it in for Linux.
+# Never compiled for Win/mac (cef feature off).
+[package]
+name = "tauri-runtime-cef"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+devtools = []
