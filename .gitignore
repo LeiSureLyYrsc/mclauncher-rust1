@@ -1,0 +1,17 @@
+node_modules/
+.npm/
+dist/
+src-tauri/target/
+*.log
+data/**
+!data/.gitkeep
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+ref-*.png
+# Large binary assets — CI/local via scripts/fetch-assets.sh
+public/assets/backgrounds/*.png
+public/assets/backgrounds/*.jpg
+# Keep small UI icons in repo if present; still fetchable
