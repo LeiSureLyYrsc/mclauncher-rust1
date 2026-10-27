@@ -9,23 +9,13 @@ edition = "2021"
 name = "mclauncher_rust1_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-[features]
-# Win/mac（及未切 CEF 的本地构建）走系统 WebView（wry）。
-# Linux 发布构建：`--no-default-features --features cef`（见 scripts/tauri-linux-cef.mjs）。
-default = ["wry"]
-wry = ["tauri/wry"]
-cef = ["dep:tauri-runtime-cef"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# default-features = false：避免 wry 绑死所有平台；运行时由本 crate 的 wry/cef feature 选择。
-tauri = { version = "2", default-features = false, features = [
-  "compression",
-  "common-controls-v6",
-] }
+tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -42,22 +32,6 @@ thiserror = "1"
 futures-util = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
-
-# Linux：dialog 走 xdg-portal，避免 rfd/gtk 与 CEF 同抢 GLib 主循环导致 SIGTRAP。
-# CEF runtime：锁文件需能解析；非 CEF 构建由下方 [patch] 指到 stub，
-# CEF 构建由 .cargo/cef.toml（--config）覆盖为 readest/tauri feat/cef。
-[target.'cfg(target_os = "linux")'.dependencies]
-tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
-tauri-runtime-cef = { version = "0.1", optional = true }
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-tauri-plugin-dialog = "2"
-
-# Non-CEF builds: resolve optional tauri-runtime-cef to an empty stub.
-# Linux CEF builds pass `--config .cargo/cef.toml`, whose patch wins and
-# replaces this with the real feat/cef crate.
-[patch.crates-io]
-tauri-runtime-cef = { path = "crates/tauri-runtime-cef-stub" }
 
 [profile.release]
 panic = "abort"
