@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MCLauncher",
+  "version": "0.1.0",
+  "identifier": "net.mcsky.mclauncher.rust1",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "MCLauncher",
+        "width": 720,
+        "height": 450,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "center": true,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/henry.w@example.net",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "shortDescription": "Melody-style Minecraft launcher",
+    "longDescription": "MCLauncher 5.31 rewrite with offline and authlib-injector login, official/BMCLAPI downloads."
+  }
+}
