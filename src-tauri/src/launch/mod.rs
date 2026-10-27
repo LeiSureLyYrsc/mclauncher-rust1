@@ -4,11 +4,48 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Serialize)]
+#[derive(Serialize, Default, Debug)]
 pub struct LaunchResult {
     pub ok: bool,
     pub command: String,
     pub message: String,
+    /// 预检发现缺失文件，需要补全（前端据此询问「是否补全」）
+    #[serde(default)]
+    pub need_repair: bool,
+    /// 缺失文件数
+    #[serde(default)]
+    pub missing: u64,
+    /// 各类别缺失数
+    #[serde(default)]
+    pub missing_by_category: Vec<download::MissingCount>,
+    /// 启动后迅速退出时的退出码
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+}
+
+/// 启动后观察窗口：此时间内进程退出视为「启动即退出」。
+pub const EARLY_EXIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// 在 `dur` 内轮询子进程是否已退出；退出则返回 Some(退出码，被信号杀死时为 -1)。
+pub async fn wait_early_exit(child: &mut std::process::Child, dur: std::time::Duration) -> Option<i32> {
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return Some(st.code().unwrap_or(-1)),
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+        if start.elapsed() >= dur {
+            return None;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+fn log_tail(path: &Path, max_lines: usize) -> String {
+    let text = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).to_string()).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(max_lines)..].join("\n")
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -393,9 +430,8 @@ pub fn pick_java_exe(path: &str, debug: bool) -> String {
 
 pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> LaunchResult {
     let fail = |m: String| LaunchResult {
-        ok: false,
-        command: String::new(),
         message: m,
+        ..Default::default()
     };
     let game_dir = config::resolve_game_dir(settings);
     let version_id = settings.selected_version.trim();
@@ -407,6 +443,39 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
     let json_path = versions_dir.join(format!("{version_id}.json"));
     if !json_path.exists() {
         return fail(format!("缺少版本元数据，请前往下载中心安装 {version_id}"));
+    }
+    // 启动前预检：库（仅本平台）、client jar、资源索引及全部资源对象的存在性与大小
+    let precheck = {
+        let g = game_dir.clone();
+        let id = version_id.to_string();
+        tokio::task::spawn_blocking(move || download::check_version_files(&g, &id))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r)
+    };
+    match precheck {
+        Ok(r) if !r.ok => {
+            return LaunchResult {
+                ok: false,
+                command: String::new(),
+                message: format!(
+                    "检测到 {} 个缺失文件（{}），是否补全？",
+                    r.missing,
+                    r.summary()
+                ),
+                need_repair: true,
+                missing: r.missing,
+                missing_by_category: r.missing_by_category,
+                exit_code: None,
+            };
+        }
+        Ok(r) => {
+            if !r.install_complete {
+                // 旧版本启动器安装、但文件已齐全：补写完成标记
+                let _ = download::write_install_marker(&game_dir, version_id, r.checked as usize);
+            }
+        }
+        Err(e) => return fail(e),
     }
     if !jar_path.exists() {
         return fail(format!("缺少客户端 jar，请前往下载中心安装 {version_id}"));
@@ -450,9 +519,9 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
 
     let mut cmd = Command::new(&java);
     cmd.args(&all_args).current_dir(&run_dir);
+    let log = config::data_dir().join("输出日志.txt");
     if settings.debug_mode {
         // 原版：开启调试模式将以 java.exe 启动 minecraft，并输出 输出日志.txt
-        let log = config::data_dir().join("输出日志.txt");
         match std::fs::File::create(&log) {
             Ok(f) => {
                 let f2 = f.try_clone().ok();
@@ -470,15 +539,38 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     match cmd.spawn() {
-        Ok(_child) => LaunchResult {
-            ok: true,
-            command: cmd_preview,
-            message: format!("已启动 {version_id}（内存 {memory_mb} MB）"),
+        Ok(mut child) => match wait_early_exit(&mut child, EARLY_EXIT_WINDOW).await {
+            Some(code) => {
+                let mut message = format!(
+                    "游戏启动后立即退出（退出码 {code}），请开启调试模式查看输出日志（data\\输出日志.txt）"
+                );
+                if settings.debug_mode {
+                    let tail = log_tail(&log, 15);
+                    if !tail.trim().is_empty() {
+                        message.push_str("\n\n");
+                        message.push_str(&tail);
+                    }
+                }
+                LaunchResult {
+                    ok: false,
+                    command: cmd_preview,
+                    message,
+                    exit_code: Some(code),
+                    ..Default::default()
+                }
+            }
+            None => LaunchResult {
+                ok: true,
+                command: cmd_preview,
+                message: format!("已启动 {version_id}（内存 {memory_mb} MB）"),
+                ..Default::default()
+            },
         },
         Err(e) => LaunchResult {
             ok: false,
             command: cmd_preview,
             message: format!("启动失败: {e}"),
+            ..Default::default()
         },
     }
 }
@@ -716,5 +808,37 @@ mod tests {
         assert_eq!(java_major(r#"java version "1.8.0_381""#), 8);
         assert_eq!(java_major(r#"openjdk version "17.0.2" 2022-01-18"#), 17);
         assert_eq!(java_major("garbage"), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn early_exit_detected() {
+        let mut c = std::process::Command::new("sh").args(["-c", "exit 3"]).spawn().unwrap();
+        assert_eq!(wait_early_exit(&mut c, EARLY_EXIT_WINDOW).await, Some(3));
+        let mut c = std::process::Command::new("sh").args(["-c", "sleep 2"]).spawn().unwrap();
+        let t = std::time::Instant::now();
+        assert_eq!(wait_early_exit(&mut c, std::time::Duration::from_millis(300)).await, None);
+        assert!(t.elapsed() < std::time::Duration::from_secs(1));
+        let _ = c.kill();
+    }
+
+    #[tokio::test]
+    async fn launch_blocks_when_files_missing() {
+        let g = std::env::temp_dir().join(format!("mcl-launch-pre-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&g);
+        let v = g.join("versions").join("1.0");
+        std::fs::create_dir_all(&v).unwrap();
+        std::fs::write(
+            v.join("1.0.json"),
+            r#"{"id":"1.0","mainClass":"M","downloads":{"client":{"sha1":"","size":3,"url":"u"}},"assetIndex":{"id":"1","sha1":"","size":5,"url":"u"}}"#,
+        )
+        .unwrap();
+        let mut s = Settings::default();
+        s.game_dir = g.to_string_lossy().to_string();
+        s.selected_version = "1.0".into();
+        let r = launch_game(&s, None).await;
+        assert!(!r.ok && r.need_repair);
+        assert_eq!(r.missing, 2);
+        assert!(r.message.contains("检测到 2 个缺失文件"), "{}", r.message);
     }
 }

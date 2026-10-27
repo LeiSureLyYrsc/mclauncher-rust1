@@ -43,7 +43,7 @@ async function pickPath(opts) {
 
 const mockDb = {
   settings: {
-    download_source: "bmclapi", download_concurrency: 16, game_dir: "", version_isolation: false,
+    download_source: "bmclapi", download_concurrency: 32, game_dir: "", version_isolation: false,
     window_width: 854, window_height: 480, fullscreen: false, after_launch: "keep", debug_mode: false,
     selected_version: "1.20.1", java_path: "", memory_auto: true, max_memory_mb: 2048, jvm_args: "",
     skin: "default", background_path: "",
@@ -120,6 +120,8 @@ function mockInvoke(cmd, args) {
     ],
     list_local_versions: () => [...mockDb.versions],
     download_version: ({ versionId }) => mockProgress(versionId),
+    repair_version: ({ versionId }) => mockProgress(versionId),
+    check_version_files: ({ versionId }) => ({ version_id: versionId, ok: false, checked: 5147, missing: 3219, missing_by_category: [{ category: "Assets", label: "资源文件", count: 3219 }], samples: [], install_complete: false }),
     cancel_download: () => { mockDb.cancel = true; return true; },
     rename_version: ({ old, new: n }) => { mockDb.versions = mockDb.versions.map((v) => (v === old ? n : v)); },
     delete_version: ({ id }) => { mockDb.versions = mockDb.versions.filter((v) => v !== id); },
@@ -549,14 +551,15 @@ function paneVersions(p) {
   if (!state.selVersion || !vers.includes(state.selVersion)) state.selVersion = vers.includes(cur) ? cur : vers[0] || null;
   p.innerHTML = `
     <div class="label abs" style="left:160px;top:42px;">游戏列表</div>
-    <div class="listbox" id="verList" style="left:160px;top:66px;width:410px;height:152px;">
+    <div class="listbox" id="verList" style="left:160px;top:66px;width:410px;height:120px;">
       ${vers.length ? vers.map((v) => `<div class="li ${v === state.selVersion ? "sel" : ""}" data-v="${esc(v)}">${esc(v)}${v === cur ? `<span class="sub">（当前）</span>` : ""}</div>`).join("") : `<div class="empty">尚未安装任何版本，点主界面「更新游戏」下载</div>`}
     </div>
     <button class="btn sm" id="vUse" style="left:580px;top:66px;width:90px;">设为当前</button>
     <button class="btn sm" id="vRename" style="left:580px;top:98px;width:90px;">重命名</button>
     <button class="btn sm" id="vDelete" style="left:580px;top:130px;width:90px;">删除选中游戏</button>
     <button class="btn sm" id="vRefresh" style="left:580px;top:162px;width:90px;">刷新</button>
-    <button class="btn sm" id="vDownload" style="left:580px;top:194px;width:90px;">下载新版本</button>`;
+    <button class="btn sm" id="vDownload" style="left:580px;top:194px;width:90px;">下载新版本</button>
+    <button class="btn sm" id="vRepair" style="left:160px;top:194px;width:150px;">检查并补全游戏文件</button>`;
   $$("#verList .li").forEach((li) => {
     li.onclick = () => { state.selVersion = li.dataset.v; $$("#verList .li").forEach((x) => x.classList.toggle("sel", x === li)); };
     li.ondblclick = () => $("#vUse").click();
@@ -593,6 +596,14 @@ function paneVersions(p) {
   };
   $("#vRefresh").onclick = async () => { await refreshLocalVersions(); paneVersions($("#pane")); paneMsg("已刷新"); };
   $("#vDownload").onclick = () => showDownload();
+  $("#vRepair").onclick = async () => {
+    if (!need()) return;
+    const id = state.selVersion;
+    let r;
+    try { r = await invoke("check_version_files", { versionId: id }); } catch (e) { paneMsg(errText(e), true); return; }
+    if (r.ok) { paneMsg(`${id}：已检查 ${r.checked} 个文件，文件完整`); return; }
+    if (await askRepair(id, r.missing, r.missing_by_category)) runInstall(id, true);
+  };
 }
 
 /* --- Java（原版：java路径 + 浏览 / 查找java / 最大内存 自动设置·手动） --- */
@@ -658,7 +669,8 @@ function paneDownload(p) {
     <div class="note abs" style="left:160px;top:118px;width:510px;line-height:18px;">
       BMCLAPI：https://bmclapi2.bangbang93.com，失败时自动回退到官方地址。<br/>
       已存在且 SHA-1 校验通过的文件会跳过；失败的文件会列在下载窗口中，可再次下载重试。<br/>
-      并发数越高越快，但网络较差时建议 8 以下。</div>
+      默认并发 32（范围 1–64），大文件自动分片下载。BMCLAPI 为公益镜像，有频率限制：<br/>
+      若频繁出现 429/5xx 失败请调低并发，启动器也会自动临时降速并退避重试。</div>
     <button class="btn sm" id="dSave" style="left:580px;top:218px;width:90px;">保存设置</button>`;
   $("#dConc").oninput = () => { $("#dConcV").textContent = $("#dConc").value; };
   $("#dSave").onclick = () => saveSettings({ download_source: radioVal("dSrc") || "bmclapi", download_concurrency: +$("#dConc").value });
@@ -804,11 +816,11 @@ const CAT_ORDER = [["VersionJson", "版本 JSON"], ["ClientJar", "客户端 Jar"
 const ST_TEXT = { waiting: ["等待", "st-wait"], pending: ["等待", "st-wait"], running: ["下载中", "st-run"], done: ["完成", "st-ok"], failed: ["有失败", "st-err"] };
 let unlistenProgress = null;
 
-function openDlg(id) {
+function openDlg(id, repair) {
   const host = $("#dlgHost");
   host.innerHTML = `
     <div class="dlg" id="dlg">
-      <div class="dlg-title" id="dlgTitle">正在更新 ${esc(id)}</div>
+      <div class="dlg-title" id="dlgTitle">${repair ? "正在补全" : "正在更新"} ${esc(id)}</div>
       <table class="dlg-table">
         <thead><tr><th>项目</th><th style="text-align:right">文件</th><th style="text-align:right">大小</th><th>状态</th><th>进度</th></tr></thead>
         <tbody id="dlgRows">
@@ -856,29 +868,34 @@ function updateDlg(ev) {
   $("#dlgSize").textContent = `${fmtBytes(ev.bytes_done)} / ${fmtBytes(ev.bytes_total)}`;
   $("#dlgSpeed").textContent = `${fmtBytes(ev.speed_bps)}/s`;
 }
-function finishDlg(id, result, lastEv) {
+function finishDlg(id, result, lastEv, repair) {
   if (!$("#dlg")) return;
   const failed = result?.failed || lastEv?.failed || [];
   const cancelled = lastEv?.stage === "cancelled" || result?.message === "已取消";
-  $("#dlgTitle").textContent = cancelled ? `已取消更新 ${id}` : result?.ok ? `${id} 更新完成` : `${id} 更新未完成`;
+  const verb = repair ? "补全" : "更新";
+  $("#dlgTitle").textContent = cancelled ? `已取消${verb} ${id}（游戏文件未完整）` : result?.ok ? `${id} ${verb}完成` : `${id} ${verb}未完成`;
   $("#dlgCur").textContent = result?.message || "";
   $("#dlgSpeed").textContent = "-";
   if (failed.length) {
     $("#dlgInfo").outerHTML = `<div class="dlg-failed"><div class="note" style="color:#C62828;">以下文件更新失败（${failed.length}）— 更新失败文件列表：</div><textarea readonly>${esc(failed.join("\n"))}</textarea></div>`;
   }
   $("#dlgBtnCancel").remove();
-  $("#dlg").insertAdjacentHTML("beforeend", `${!result?.ok ? `<button class="btn" id="dlgBtnRetry">重新下载</button>` : ""}<button class="btn" id="dlgBtnClose">关闭</button>`);
+  $("#dlg").insertAdjacentHTML("beforeend", `${!result?.ok ? `<button class="btn" id="dlgBtnRetry">重试 / 补全</button>` : ""}<button class="btn" id="dlgBtnClose">关闭</button>`);
   $("#dlgBtnClose").onclick = closeDlg;
-  if ($("#dlgBtnRetry")) $("#dlgBtnRetry").onclick = async () => { await closeDlg(); state.selectedRemote = id; installSelected(); };
+  if ($("#dlgBtnRetry")) $("#dlgBtnRetry").onclick = async () => { await closeDlg(); runInstall(id, true); };
 }
 async function closeDlg() { await hideFaded($("#dlgHost")); $("#dlgHost").innerHTML = ""; }
 
 async function installSelected() {
   const id = state.selectedRemote;
   if (!id) { showMessage("提示", "请先选择一个版本"); return; }
+  return runInstall(id, false);
+}
+/* 安装（repair=false）或检查并补全（repair=true：用本地版本 json，只下缺失/损坏文件） */
+async function runInstall(id, repair) {
   if (state.downloading) return;
   state.downloading = true;
-  openDlg(id);
+  openDlg(id, repair);
   let lastEv = null;
   if (unlistenProgress) { unlistenProgress(); unlistenProgress = null; }
   unlistenProgress = await listen("download-progress", (e) => {
@@ -887,20 +904,24 @@ async function installSelected() {
   });
   let result = null;
   try {
-    result = await invoke("download_version", { versionId: id });
+    result = await invoke(repair ? "repair_version" : "download_version", { versionId: id });
   } catch (e) {
     result = { ok: false, message: errText(e), failed: [] };
   }
   state.downloading = false;
   if (unlistenProgress) { unlistenProgress(); unlistenProgress = null; }
   if (lastEv) updateDlg(lastEv);
-  finishDlg(id, result, lastEv);
+  finishDlg(id, result, lastEv, repair);
   await refreshLocalVersions();
-  if (result?.ok) {
+  if (result?.ok && !repair) {
     state.settings = await invoke("set_settings", { settings: { ...state.settings, selected_version: id } });
     updateVersionBox();
-    renderRemoteList();
+    if ($("#dlList")) renderRemoteList();
   }
+}
+async function askRepair(id, missing, cats) {
+  const detail = (cats || []).map((c) => `${c.label} ${c.count}`).join("、");
+  return showMessage("游戏文件不完整", `${id}：检测到 ${missing} 个缺失文件${detail ? `（${detail}）` : ""}，是否补全？`, { cancel: true });
 }
 
 /* ============================== 启动 ============================== */
@@ -914,9 +935,13 @@ async function doLaunch() {
       const w = await currentWindow();
       if (after === "minimize" && w) w.minimize();
       else if (after === "close") setTimeout(closeApp, 800);
+    } else if (r.need_repair) {
+      setStatus("");
+      const id = state.settings?.selected_version;
+      if (id && (await askRepair(id, r.missing, r.missing_by_category))) runInstall(id, true);
     } else {
       setStatus("");
-      showMessage("启动", (r.message || "无法启动") + (r.command ? `\n\n命令预览：\n${r.command}` : ""));
+      showMessage("启动", (r.message || "无法启动") + (r.command && r.exit_code == null ? `\n\n命令预览：\n${r.command}` : ""));
     }
   } catch (e) { setStatus(""); showError(e); }
 }

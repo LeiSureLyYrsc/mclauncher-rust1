@@ -66,7 +66,7 @@ fn default_source() -> String {
     "bmclapi".into()
 }
 fn default_concurrency() -> u32 {
-    16
+    32
 }
 fn default_mem() -> u32 {
     2048
@@ -229,7 +229,7 @@ mod tests {
         .unwrap();
         assert_eq!(s.download_source, "official");
         assert_eq!(s.max_memory_mb, 3000);
-        assert_eq!(s.download_concurrency, 16);
+        assert_eq!(s.download_concurrency, 32);
         assert!(s.memory_auto);
         assert_eq!(s.after_launch, "keep");
         assert_eq!((s.window_width, s.window_height), (854, 480));
