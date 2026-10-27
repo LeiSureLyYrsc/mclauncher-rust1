@@ -15,3 +15,5 @@ ref-*.png
 public/assets/backgrounds/*.png
 public/assets/backgrounds/*.jpg
 # Keep small UI icons in repo if present; still fetchable
+src-tauri/Cargo.lock.wry
+.cache/
