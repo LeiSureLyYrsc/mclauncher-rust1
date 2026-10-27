@@ -1,0 +1,294 @@
+/* Melody / MCLauncher 5.31 — 一比一布局（对照 MainWindow.xaml + MelodyTheme.xaml） */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 720px; height: 450px; overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Noto Sans SC", sans-serif;
+}
+#app {
+  width: 720px; height: 450px; position: relative;
+  background: transparent;
+}
+
+/* ContentCard: Margin 6, CornerRadius 2, Border #66FFFFFF */
+.content-card {
+  position: absolute; left: 6px; top: 6px; width: 708px; height: 438px;
+  border-radius: 2px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.4);
+  background-color: #1a2a33;
+  background-image: url("/assets/backgrounds/main.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.layer { position: absolute; inset: 0; pointer-events: none; }
+.layer > * { pointer-events: auto; }
+
+/* MelodyButtonBase: 外层 #A343697E + 内描边 #CF7C8C95 + 顶亮底暗 + 阴影 */
+.btn {
+  position: absolute;
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+  color: #333536;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  border-radius: 1px;
+  display: flex; align-items: center; justify-content: center;
+  /* Outer dark ring via box-shadow + inner stroke via inset */
+  box-shadow:
+    0 0 0 1px #A343697E,
+    inset 0 0 0 1px #CF7C8C95,
+    inset 0 1px 0 #D1D6D8D9,
+    inset 0 -1px 0 #F7E6EBEE,
+    0 1px 2px rgba(0,0,0,0.25);
+  background: #E7DDE4E7;
+  image-rendering: auto;
+}
+.btn:hover {
+  background: #F0EDF1F2;
+}
+.btn:hover::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.15);
+  pointer-events: none;
+  border-radius: 1px;
+}
+.btn:active {
+  transform: translate(1px, 1px);
+}
+.btn:active::after {
+  background: rgba(0,0,0,0.2);
+}
+.btn:disabled { opacity: 0.45; pointer-events: none; }
+
+/* BtnBig: 150x75 @ 430,310 — 渐变 + 25px Bold */
+.btn-big {
+  left: 430px; top: 310px; width: 150px; height: 75px;
+  font-size: 25px; font-weight: bold; color: #232628;
+  letter-spacing: 1px;
+  background: linear-gradient(180deg, #E2DDE4E7 0%, #F6E1E7E8 100%);
+}
+
+/* BtnSmall: 更新游戏 100x35 @ 590,310 */
+.btn-update {
+  left: 590px; top: 310px; width: 100px; height: 35px;
+  font-size: 12px; color: #333536;
+  background: #E7DDE4E7;
+}
+
+/* BtnSmall: 设置 100x35 @ 590,350 */
+.btn-settings {
+  left: 590px; top: 350px; width: 100px; height: 35px;
+  font-size: 12px; color: #333536;
+  background: #E7DDE4E7;
+}
+
+/* BtnText: 版本设置 @ 620,393 */
+.btn-text {
+  left: 620px; top: 393px; width: 100px; height: 25px;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(255,255,255,0.89);
+  font-size: 13px;
+  justify-content: flex-start;
+  padding-left: 6px;
+}
+.btn-text:hover {
+  color: rgba(255,255,255,0.95);
+  background: transparent !important;
+}
+.btn-text:hover::after { display: none; }
+.btn-text:active { transform: translate(1px, 1px); }
+
+/* VersionBorder: 185x30 @ 430,390 — #E7F5F7F8 / #FFB8C4CC */
+.version-box {
+  position: absolute; left: 430px; top: 390px; width: 185px; height: 30px;
+  background: #E7F5F7F8;
+  border: 1px solid #B8C4CC;
+  border-radius: 1px;
+  display: flex; align-items: center;
+  padding: 0 10px 0 9px;
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+  font-size: 13px; color: #333536;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+
+/* Credit: SimSun @ 4,433 #BEBEBF */
+.credit {
+  position: absolute; left: 4px; top: 433px;
+  font-family: SimSun, "宋体", "Songti SC", "Noto Serif SC", serif;
+  font-size: 14px; color: #BEBEBF;
+  text-shadow: 1px 1px 1px rgba(0,0,0,0.55);
+  pointer-events: none;
+  line-height: 1;
+}
+
+/* Close X: 24x24 @ 682,4 */
+.btn-close-win {
+  position: absolute; left: 682px; top: 4px; width: 24px; height: 24px;
+  background: transparent; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.btn-close-win:hover { opacity: 0.75; }
+
+.main-status {
+  position: absolute; left: 10px; top: 405px; width: 400px; height: 20px;
+  font-size: 11px; color: #F2F6FA;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: none;
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+}
+.main-status.show { display: block; }
+
+.drag-region {
+  position: absolute; left: 6px; top: 6px; width: 670px; height: 36px;
+  -webkit-app-region: drag; app-region: drag;
+  z-index: 5;
+}
+.no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
+
+/* Context menu — classic WinForms-ish */
+.ctx-menu {
+  position: absolute; z-index: 1000; min-width: 180px;
+  background: #f0f3f5; border: 1px solid #8a9aa3;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.35);
+  padding: 2px 0; display: none; font-size: 13px;
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+}
+.ctx-menu.show { display: block; }
+.ctx-item { padding: 5px 18px; cursor: pointer; color: #1a2a33; }
+.ctx-item:hover { background: #3a7eb8; color: #fff; }
+.ctx-sep { height: 1px; background: #c0c8cc; margin: 3px 6px; }
+
+.overlay-host {
+  position: absolute; inset: 0; z-index: 100; display: none;
+}
+.overlay-host.show { display: block; }
+
+/* Overlay 698×268 @ (11,91) — #9474C2E5 → #94A6DAEF, radius ~5.5 */
+.overlay-panel {
+  position: absolute; left: 11px; top: 91px; width: 698px; height: 268px;
+  border-radius: 6px;
+  border: 1px solid rgba(165,161,161,0.39);
+  background: linear-gradient(180deg, rgba(116,194,229,0.58) 0%, rgba(166,218,239,0.58) 100%);
+  box-shadow:
+    0 0 0 5px rgba(0,0,0,0.12),
+    0 0 0 10px rgba(0,0,0,0.08);
+  font-size: 12px; color: #000;
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+}
+.overlay-close {
+  position: absolute; left: 656px; top: 4px; width: 22px; height: 22px;
+  background: transparent; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2;
+}
+.overlay-close:hover { opacity: 0.75; }
+
+.group-title {
+  position: absolute; font-size: 12px; color: #000;
+  padding: 0 4px; z-index: 1;
+}
+.group-box {
+  position: absolute;
+  border: 1px solid rgba(23,60,68,0.27);
+  pointer-events: none;
+}
+
+.field {
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+  font-size: 12px; color: #1E2B33;
+  background: rgba(255,255,255,0.9);
+  border: 1px solid #8C9AA3; border-radius: 1px;
+  padding: 0 6px; height: 24px; outline: none;
+}
+.field:focus { border-color: #3C9CE3; }
+.label { font-size: 12px; color: #000; }
+.note { font-size: 11px; color: #173C44; }
+
+.radio-row, .check-row {
+  display: flex; align-items: center; gap: 4px; cursor: pointer;
+  font-size: 12px; color: #000; height: 24px;
+}
+.radio-row input, .check-row input { display: none; }
+.radio-row .gfx, .check-row .gfx {
+  width: 13.5px; height: 13.5px;
+  background-size: contain; background-repeat: no-repeat;
+  flex-shrink: 0;
+}
+.radio-row .gfx { background-image: url("/assets/ui/radio_off.png"); }
+.radio-row:hover .gfx { background-image: url("/assets/ui/radio_off_hover.png"); }
+.radio-row input:checked + .gfx { background-image: url("/assets/ui/radio_on.png"); }
+.radio-row input:checked ~ span:last-child { color: #0000FF; }
+.check-row .gfx { background-image: url("/assets/ui/checkbox_off.png"); }
+.check-row:hover .gfx { background-image: url("/assets/ui/checkbox_off_hover.png"); }
+.check-row input:checked + .gfx { background-image: url("/assets/ui/checkbox_on.png"); }
+
+.download-page {
+  position: absolute; inset: 0; z-index: 90; display: none;
+}
+.download-page.show { display: block; }
+.dl-titlebar {
+  position: absolute; left: 6px; top: 6px; width: 708px; height: 29px;
+  background: linear-gradient(180deg, rgba(120,196,226,0.58), rgba(114,191,221,0.58));
+}
+.dl-card {
+  position: absolute; left: 19px; top: 35px; width: 680px; height: 358px;
+  background: #EBF0F7FA; border: 1px solid #C8D2D8;
+  display: flex; flex-direction: column;
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+}
+.dl-head {
+  height: 20px; display: flex; align-items: center; font-size: 13px; color: #2A3238;
+  border-bottom: 1px solid #A8B4BC; padding: 0 8px; gap: 12px;
+}
+.dl-head .status {
+  margin-left: auto; font-size: 11px; color: #10222F; max-width: 360px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dl-list { flex: 1; overflow-y: auto; }
+.dl-row {
+  display: flex; align-items: center; height: 24px; padding: 0 8px;
+  font-size: 12px; color: #17323D; cursor: pointer;
+}
+.dl-row:hover, .dl-row.selected { background: rgba(58,126,184,0.25); }
+.dl-row .col-ver { width: 70px; }
+.dl-row .col-name { width: 100px; }
+.dl-row .col-desc { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl-bottom {
+  position: absolute; left: 6px; top: 394px; width: 708px; height: 48px;
+  background: linear-gradient(180deg, rgba(159,160,160,0.6), rgba(121,126,128,0.6));
+  display: flex; align-items: center; padding: 0 20px; gap: 16px;
+}
+.dl-bottom .btn {
+  position: static; height: 28px; width: auto; padding: 0 14px; font-size: 12px;
+}
+
+.msg-host {
+  position: absolute; inset: 0; z-index: 200; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.15);
+}
+.msg-host.show { display: flex; }
+.msg-box {
+  width: 360px; min-height: 120px; padding: 16px 18px 14px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(116,194,229,0.72), rgba(166,218,239,0.72));
+  border: 1px solid rgba(165,161,161,0.5);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+  color: #10222F; font-size: 13px;
+  font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+}
+.msg-box .msg-title { font-weight: bold; margin-bottom: 8px; }
+.msg-box .msg-body { margin-bottom: 14px; white-space: pre-wrap; word-break: break-word; }
+.msg-box .msg-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.msg-box .btn { position: static; width: 72px; height: 28px; font-size: 12px; }
+
+.acc-left { position: absolute; left: 15px; top: 30px; width: 385px; height: 180px; overflow: hidden; }
+.acc-right { position: absolute; left: 422px; top: 30px; width: 251px; height: 180px; overflow: hidden; }
