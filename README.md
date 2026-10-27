@@ -23,33 +23,6 @@
 | 启动游戏（组命令 + spawn） | ✅（缺文件时提示） |
 | 微软登录 | ❌ 路线图 |
 
-## WebView 运行时（多平台一致性）
-
-| 平台 | 渲染引擎 | 说明 |
-|------|----------|------|
-| **Linux** | **CEF（捆绑 Chromium）** | alpha；与 Win/mac 的 Chromium/Blink 渲染更接近，避免 WebKitGTK 差异 |
-| Windows | WebView2（系统） | 现有 wry 路径，不变 |
-| macOS | WKWebView（系统） | 现有 wry 路径，不变 |
-
-**为何 Linux 用 CEF**：系统 WebKitGTK 在滚动、CSS、GPU 合成上与 WebView2 / WKWebView 差异大，UI 很难统一。CEF 自带 Chromium，Linux 表现可对齐其它桌面端。方案对齐 [Readest](https://github.com/readest/readest) / Tauri `feat/cef`（本仓库 patch 使用 Readest fork：上游 `feat/cef` 已去掉 `tauri/wry` feature，且 AppImage 打包依赖 Readest CLI 修复）。
-
-> **诚实标注**：CEF 仍为 alpha。Linux 上通常是「主程序 + CEF 运行时目录」，或打进 AppImage / deb；**不是**「一个纯静态单文件 exe」。产物体积会显著变大（数百 MB 级），属预期。
-
-### Linux 构建注意
-
-- **命令**（Linux）：`npm run tauri:linux-cef -- build`（内部交换 `Cargo.cef.lock`、启用 `--features cef`、加载 `src-tauri/.cargo/cef.toml`）
-- **Win / mac**：`npm run tauri build`（wry + 现有 `Cargo.lock`）
-- **X11 / Wayland**：CEF 运行时强制 X11；纯 Wayland 需 **XWayland**（`DISPLAY` 非空）。Niri 等可装 `xwayland-satellite`
-- **首次启动**：代码已传 Chromium `--no-first-run`，避免空 profile 立刻退出（exit 28）
-- **文件对话框**：Linux 使用 `xdg-portal`（避免 rfd/gtk 与 CEF 抢 GLib 主循环）
-- **无边框拖拽**：CEF+X11 上系统 `startDragging` 可能受限（已知上游限制）；若拖不动窗口属已知问题
-
-### 锁文件
-
-- `src-tauri/Cargo.lock` → Win/mac（wry）
-- `src-tauri/Cargo.cef.lock` → Linux CEF
-- 中断的 CEF 构建若留下 `Cargo.lock.wry`：`mv src-tauri/Cargo.lock.wry src-tauri/Cargo.lock`
-
 ## UI 说明
 
 布局严格参考：
@@ -75,20 +48,14 @@
 
 - Node.js 18+
 - Rust stable
-- **Linux CEF**：GTK3、NSS、GBM、ALSA、udev、libxkbcommon-x11、patchelf 等（见 CI）；**不再依赖 webkit2gtk** 作为发布路径
-- Win：WebView2；macOS：系统 WebKit
+- Tauri 2 系统依赖（Linux 需 `webkit2gtk` 等）
 
 ```bash
 # 拉取大图资源（若 public/assets 为空）
 bash scripts/fetch-assets.sh
 
 npm install
-
-# Win / mac
 npm run tauri dev
-
-# Linux（CEF）
-npm run tauri:linux-cef -- dev
 ```
 
 本地数据目录：`data/`（`settings.json`、`accounts.json`、`.minecraft/`、`authlib-injector.jar`）。**不要把含令牌的 accounts 提交到 git**。
@@ -96,14 +63,10 @@ npm run tauri:linux-cef -- dev
 ### 构建
 
 ```bash
-# Win / mac
 npm run tauri build
-
-# Linux CEF
-npm run tauri:linux-cef -- build --bundles appimage,deb
 ```
 
-产物在 `src-tauri/target/release/bundle/`。Linux 另可能有旁路 CEF 资源目录 / tarball。
+产物在 `src-tauri/target/release/bundle/`。
 
 ## 下载源
 
@@ -136,18 +99,15 @@ jar 首次会尝试从 BMCLAPI authlib-injector 镜像缓存到 `data/`。
 
 | 平台 | 产物 | 备注 |
 |------|------|------|
-| Windows | NSIS / MSI + `release` 目录下可执行文件 | 需要 WebView2；CI 使用 Evergreen bootstrapper |
-| Linux | AppImage / deb（含 CEF）+ 可选 runtime tarball | **主程序 + Chromium 运行时**；体积远大于 WebKitGTK 版 |
+| Windows | NSIS / MSI + `release` 目录下可执行文件 | 需要 WebView2；CI 使用 Evergreen bootstrapper 配置，也可另下运行时 |
+| Linux | AppImage / deb | AppImage 相对接近「单文件」分发 |
 | macOS | `.app` / dmg | 非单一裸二进制 |
+
+Tauri 应用依赖系统 WebView，无法在所有平台做到「绝对零依赖单文件」；文档与 workflow 已尽量提供便携产物。
 
 ## GitHub Actions
 
-`.github/workflows/build.yml`：
-
-- `windows-latest` / `macos-latest`：`tauri-apps/tauri-action` + wry
-- `ubuntu-22.04`：安装 CEF 依赖与 `cargo tauri`（readest/tauri）、`scripts/tauri-linux-cef.mjs` 构建；缓存 `~/.cache/tauri-cef`；artifact 名带 `-cef`
-
-CI 第一步会跑 `scripts/fetch-assets.sh` 拉取背景与 UI 小图。
+`.github/workflows/build.yml`：`windows-latest` / `ubuntu-latest` / `macos-latest` 矩阵，使用 `tauri-apps/tauri-action`，并上传 artifacts。CI 第一步会跑 `scripts/fetch-assets.sh` 拉取背景与 UI 小图。
 
 ## 路线图
 
@@ -160,6 +120,5 @@ CI 第一步会跑 `scripts/fetch-assets.sh` 拉取背景与 UI 小图。
 
 - 原作：忘却的旋律 · MCLauncher 5.31 · mcsky.net
 - UI 参考开源复刻：https://github.com/yan-mc/melody-launcher
-- Linux CEF 方案参考：https://github.com/readest/readest 、Tauri `feat/cef`
 
 本项目为学习与兼容性重写，与原作者无隶属关系。

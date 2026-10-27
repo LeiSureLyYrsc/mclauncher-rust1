@@ -14,13 +14,10 @@ jobs:
         include:
           - platform: windows-latest
             args: --bundles nsis,msi
-            runtime: wry
           - platform: ubuntu-22.04
             args: --bundles appimage,deb
-            runtime: cef
           - platform: macos-latest
             args: --bundles app,dmg
-            runtime: wry
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -33,54 +30,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Linux dependencies (CEF)
-        if: matrix.runtime == 'cef'
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libfontconfig-dev \
-            libgtk-3-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xdg-utils \
-            libnss3 \
-            libnss3-dev \
-            libnspr4-dev \
-            libasound2-dev \
-            libgbm-dev \
-            libxkbcommon-x11-0 \
-            libxkbcommon-dev \
-            libudev-dev \
-            libdrm-dev \
-            libxcomposite-dev \
-            libxdamage-dev \
-            libxrandr-dev \
-            libxtst-dev \
-            libpangocairo-1.0-0 \
-            libcups2-dev \
-            libpulse0 \
-            libspeechd2 \
-            jq
-
-      - name: Stage CEF AppImage runtime libraries
-        if: matrix.runtime == 'cef'
-        run: |
-          set -euo pipefail
-          # Debian keeps NSS modules under nss/; AppImage Chromium expects them beside libnss3.
-          nss_dir=$(dirname "$(ls /usr/lib/*-linux-gnu/nss/libsoftokn3.so)")
-          lib_dir=${nss_dir%/nss}
-          sudo cp -f --remove-destination "$nss_dir"/*.so "$lib_dir/" || true
-          conf=src-tauri/tauri.conf.json
-          if command -v jq >/dev/null; then
-            jq --arg d "$lib_dir" '
-              .bundle.linux.appimage.files = (.bundle.linux.appimage.files // {}) + {
-                "/usr/lib/libspeechd.so.2": ($d + "/libspeechd.so.2"),
-                "/usr/lib/libxkbcommon-x11.so.0": ($d + "/libxkbcommon-x11.so.0")
-              }
-            ' "$conf" > "$conf.tmp" && mv "$conf.tmp" "$conf"
-          fi
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - uses: actions/setup-node@v4
         with:
@@ -92,19 +46,6 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-          key: ${{ matrix.runtime }}
-
-      - name: Cache CEF binaries
-        if: matrix.runtime == 'cef'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/tauri-cef
-            ~/.local/share/cef
-            ${{ runner.temp }}/tauri-cef
-          key: cef-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.cef.lock', 'src-tauri/.cargo/cef.toml') }}
-          restore-keys: |
-            cef-${{ runner.os }}-
 
       - name: Install frontend deps
         run: npm ci
@@ -116,60 +57,12 @@ jobs:
           python scripts/gen-icons.py
           npx tauri icon src-tauri/icons/app-icon.png
 
-      # --- Windows / macOS: system WebView (wry) via tauri-action ---
-      - name: Build Tauri app (wry)
-        if: matrix.runtime == 'wry'
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
-
-      # --- Linux: CEF runtime ---
-      - name: Install CEF tauri CLI (readest/tauri feat/cef)
-        if: matrix.runtime == 'cef'
-        run: |
-          set -euo pipefail
-          # Pin near Readest nightly; bump when AppImage/CEF CLI fixes land.
-          rev=6beeb209b5514f597a26f48b7a5b9fe4c59b5f12
-          marker="$HOME/.cargo/bin/.cargo-tauri-rev"
-          if [ -x "$HOME/.cargo/bin/cargo-tauri" ] && [ "$(cat "$marker" 2>/dev/null)" = "$rev" ]; then
-            echo "cargo-tauri at $rev already installed"
-            exit 0
-          fi
-          cargo install tauri-cli --git https://github.com/readest/tauri --rev "$rev" --locked --force
-          echo "$rev" > "$marker"
-
-      - name: Build Tauri app (Linux CEF)
-        if: matrix.runtime == 'cef'
-        env:
-          TAURI_CEF_CARGO: "1"
-          CEF_PATH: ${{ runner.temp }}/tauri-cef
-        run: |
-          set -euo pipefail
-          mkdir -p "$CEF_PATH"
-          # Also populate default cache locations used by cef-rs / CLI.
-          mkdir -p "$HOME/.cache/tauri-cef"
-          export CEF_PATH
-          node scripts/tauri-linux-cef.mjs build ${{ matrix.args }}
-
-      - name: Verify Linux graph uses CEF (not webkit/wry runtime)
-        if: matrix.runtime == 'cef'
-        working-directory: src-tauri
-        run: |
-          set -euo pipefail
-          # Temporarily apply CEF lock + config for cargo tree
-          cp Cargo.lock Cargo.lock.wry.verify
-          cp Cargo.cef.lock Cargo.lock
-          tree_out=$(cargo tree -e features --no-default-features --features cef --config .cargo/cef.toml 2>&1 || true)
-          echo "$tree_out" | head -n 200
-          echo "$tree_out" | grep -q 'tauri-runtime-cef' || { echo 'missing tauri-runtime-cef'; exit 1; }
-          if echo "$tree_out" | grep -E 'webkit2gtk|tauri-runtime-wry' >/dev/null; then
-            echo 'WARNING: webkit2gtk or tauri-runtime-wry still appears in tree (inspect above)'
-            # Soft fail for transitional graphs; uncomment to hard-fail:
-            # exit 1
-          fi
-          mv Cargo.lock.wry.verify Cargo.lock
 
       - name: Collect artifacts
         shell: bash
@@ -182,34 +75,17 @@ jobs:
               cp $B/bundle/nsis/*.exe out/ || true
               cp $B/bundle/msi/*.msi out/ || true ;;
             ubuntu-*)
-              shopt -s nullglob
-              for f in "$B"/bundle/appimage/*.AppImage; do
-                bn=$(basename "$f" .AppImage)
-                cp "$f" "out/${bn}-cef.AppImage"
-              done
-              for f in "$B"/bundle/deb/*.deb; do
-                bn=$(basename "$f" .deb)
-                cp "$f" "out/${bn}-cef.deb"
-              done
-              if [ -f "$B/mclauncher-rust1" ]; then
-                cp "$B/mclauncher-rust1" out/MCLauncher-linux-x64-cef
-                # Bundle binary + CEF sidecars next to it (fallback if AppImage/deb missing).
-                mapfile -t cef_files < <(cd "$B" && ls -1 | grep -E '^(libcef|chrome|icudtl|v8_context|snapshot_blob|resources|locales|.*\.(pak|bin|dat|so)(\..*)?)$' || true)
-                if [ ${#cef_files[@]} -gt 0 ]; then
-                  tar -C "$B" -czf out/MCLauncher-linux-x64-cef-runtime.tar.gz mclauncher-rust1 "${cef_files[@]}"
-                else
-                  tar -C "$B" -czf out/MCLauncher-linux-x64-cef-bin.tar.gz mclauncher-rust1
-                fi
-              fi
-              ;;
+              cp $B/bundle/appimage/*.AppImage out/ || true
+              cp $B/bundle/deb/*.deb out/ || true
+              cp "$B/mclauncher-rust1" out/MCLauncher-linux-x64 || true ;;
             macos-*)
               cp $B/bundle/dmg/*.dmg out/ || true
               (cd $B/bundle/macos && zip -qry "$GITHUB_WORKSPACE/out/MCLauncher-macos.app.zip" *.app) || true ;;
           esac
-          ls -lah out
+          ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mclauncher-${{ matrix.platform }}${{ matrix.runtime == 'cef' && '-cef' || '' }}
+          name: mclauncher-${{ matrix.platform }}
           path: out/*
           if-no-files-found: error

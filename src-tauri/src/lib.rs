@@ -52,6 +52,7 @@ fn get_download_sources() -> Vec<download::DownloadSourceInfo> {
 async fn list_remote_versions() -> Result<Vec<download::RemoteVersion>, String> {
     let s = config::load_settings();
     let mut list = download::list_remote_versions(&s.download_source).await?;
+    // expose release_time field name expected by frontend
     for v in &mut list {
         if v.release_time.is_empty() {
             // keep as-is
@@ -98,10 +99,9 @@ struct OkMsg {
     ok: bool,
 }
 
-fn register_plugins_and_handlers<R: tauri::Runtime>(
-    builder: tauri::Builder<R>,
-) -> tauri::Builder<R> {
-    builder
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -120,47 +120,6 @@ fn register_plugins_and_handlers<R: tauri::Runtime>(
             launch_game,
             open_game_dir,
         ])
-}
-
-#[cfg(all(feature = "cef", target_os = "linux"))]
-fn run_cef() {
-    // CEF runtime forces X11 even on Wayland (needs XWayland / DISPLAY).
-    if std::env::var_os("DISPLAY").filter(|v| !v.is_empty()).is_none() {
-        eprintln!(
-            "MCLauncher 的 Linux CEF 运行时需要 X11 DISPLAY。\n\
-             Wayland 请启用 XWayland；Niri 可安装 xwayland-satellite 并在该会话中启动。"
-        );
-        std::process::exit(1);
-    }
-
-    // Fresh Chromium profiles on Linux otherwise exit with code 28 (EULA / first-run).
-    // Sandbox disabled: AppImage cannot ship setuid chrome-sandbox; Ubuntu 24.04+ may
-    // restrict user namespaces. Deb installs can revisit SandboxPolicy::Auto later.
-    let cef = tauri_runtime_cef::Cef::default()
-        .sandbox(tauri_runtime_cef::SandboxPolicy::Disabled)
-        .command_line_arg("no-first-run", None::<String>);
-
-    let builder = tauri::Builder::<tauri_runtime_cef::CefRuntime>::new().runtime(cef);
-    register_plugins_and_handlers(builder)
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-#[cfg(not(all(feature = "cef", target_os = "linux")))]
-fn run_wry() {
-    register_plugins_and_handlers(tauri::Builder::default())
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-#[cfg_attr(
-    all(feature = "cef", target_os = "linux"),
-    tauri_runtime_cef::cef_entry_point
-)]
-pub fn run() {
-    #[cfg(all(feature = "cef", target_os = "linux"))]
-    run_cef();
-    #[cfg(not(all(feature = "cef", target_os = "linux")))]
-    run_wry();
 }
