@@ -168,7 +168,11 @@ pub fn persist_current(account: Account) -> Result<Account, String> {
     if let Some(pos) = file
         .accounts
         .iter()
-        .position(|a| a.username == account.username && a.mode == account.mode)
+        .position(|a| {
+            a.username == account.username
+                && a.mode == account.mode
+                && a.authlib_api == account.authlib_api
+        })
     {
         file.accounts[pos] = account.clone();
     } else {
@@ -189,8 +193,81 @@ pub fn list() -> AccountsFile {
     config::load_accounts()
 }
 
-// Microsoft login intentionally not implemented (stub for roadmap).
+/// 切换到已保存的第 index 个账户。
+pub fn switch_to(file: &mut AccountsFile, index: usize) -> Result<Account, String> {
+    let a = file
+        .accounts
+        .get(index)
+        .cloned()
+        .ok_or_else(|| "账户不存在".to_string())?;
+    file.current = Some(a.clone());
+    Ok(a)
+}
+
+/// 删除已保存的第 index 个账户；若删的是当前账户则同时退出登录。
+pub fn remove_at(file: &mut AccountsFile, index: usize) -> Result<(), String> {
+    if index >= file.accounts.len() {
+        return Err("账户不存在".into());
+    }
+    let removed = file.accounts.remove(index);
+    if file
+        .current
+        .as_ref()
+        .map(|c| c.username == removed.username && c.mode == removed.mode && c.authlib_api == removed.authlib_api)
+        .unwrap_or(false)
+    {
+        file.current = None;
+    }
+    Ok(())
+}
+
+pub fn switch_account(index: usize) -> Result<Account, String> {
+    let mut file = config::load_accounts();
+    let a = switch_to(&mut file, index)?;
+    config::save_accounts(&file)?;
+    Ok(a)
+}
+
+pub fn remove_account(index: usize) -> Result<AccountsFile, String> {
+    let mut file = config::load_accounts();
+    remove_at(&mut file, index)?;
+    config::save_accounts(&file)?;
+    Ok(file)
+}
+
+/// 微软正版登录：设置 → 账户 中按钮显示「暂未开放」，此处保留占位。
 #[allow(dead_code)]
 pub fn microsoft_login_stub() -> Result<Account, String> {
-    Err("微软登录尚未实现，请使用离线或 authlib-injector 外置登录".into())
+    Err("微软登录暂未开放，请使用离线或 authlib-injector 外置登录".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offline_uuid_matches_mojang() {
+        assert_eq!(offline_uuid("Steve"), "5627dd98-e6be-3c21-b8a8-e92344183641");
+    }
+
+    #[test]
+    fn offline_login_defaults_player() {
+        let a = offline_login("   ");
+        assert_eq!(a.username, "Player");
+        assert_eq!(a.mode, "offline");
+    }
+
+    #[test]
+    fn switch_and_remove() {
+        let mut f = AccountsFile::default();
+        f.accounts.push(offline_login("A"));
+        f.accounts.push(offline_login("B"));
+        let b = switch_to(&mut f, 1).unwrap();
+        assert_eq!(b.username, "B");
+        assert_eq!(f.current.as_ref().unwrap().username, "B");
+        remove_at(&mut f, 1).unwrap();
+        assert!(f.current.is_none());
+        assert_eq!(f.accounts.len(), 1);
+        assert!(switch_to(&mut f, 5).is_err());
+    }
 }

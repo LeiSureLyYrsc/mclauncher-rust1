@@ -5,6 +5,15 @@ mod launch;
 
 use config::{Account, Settings};
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::{Emitter, State};
+
+/// 当前下载任务的取消标志（同一时间只允许一个安装任务）。
+#[derive(Default)]
+struct DownloadState {
+    cancel: Mutex<Option<Arc<AtomicBool>>>,
+}
 
 #[tauri::command]
 fn get_settings() -> Settings {
@@ -13,8 +22,9 @@ fn get_settings() -> Settings {
 
 #[tauri::command]
 fn set_settings(settings: Settings) -> Result<Settings, String> {
-    config::save_settings(&settings)?;
-    Ok(settings)
+    let s = settings.normalized();
+    config::save_settings(&s)?;
+    Ok(s)
 }
 
 #[tauri::command]
@@ -43,6 +53,22 @@ fn logout() -> Result<(), String> {
     auth::logout()
 }
 
+/// 微软正版登录：占位（暂未开放）。
+#[tauri::command]
+fn microsoft_login() -> Result<Account, String> {
+    auth::microsoft_login_stub()
+}
+
+#[tauri::command]
+fn switch_account(index: usize) -> Result<Account, String> {
+    auth::switch_account(index)
+}
+
+#[tauri::command]
+fn remove_account(index: usize) -> Result<config::AccountsFile, String> {
+    auth::remove_account(index)
+}
+
 #[tauri::command]
 fn get_download_sources() -> Vec<download::DownloadSourceInfo> {
     download::sources()
@@ -51,14 +77,7 @@ fn get_download_sources() -> Vec<download::DownloadSourceInfo> {
 #[tauri::command]
 async fn list_remote_versions() -> Result<Vec<download::RemoteVersion>, String> {
     let s = config::load_settings();
-    let mut list = download::list_remote_versions(&s.download_source).await?;
-    // expose release_time field name expected by frontend
-    for v in &mut list {
-        if v.release_time.is_empty() {
-            // keep as-is
-        }
-    }
-    Ok(list)
+    download::list_remote_versions(&s.download_source).await
 }
 
 #[tauri::command]
@@ -68,17 +87,88 @@ fn list_local_versions() -> Vec<String> {
     download::list_local_versions(&dir)
 }
 
+/// 安装版本：进度通过事件 `download-progress` 推送（download::ProgressEvent）。
 #[tauri::command]
-async fn download_version(version_id: String) -> Result<download::DownloadResult, String> {
+async fn download_version(
+    app: tauri::AppHandle,
+    state: State<'_, DownloadState>,
+    version_id: String,
+) -> Result<download::DownloadResult, String> {
+    let cancel = {
+        let mut slot = state.cancel.lock().unwrap();
+        if slot.is_some() {
+            return Err("已有下载任务正在进行".into());
+        }
+        let c = Arc::new(AtomicBool::new(false));
+        *slot = Some(c.clone());
+        c
+    };
     let s = config::load_settings();
     let dir = config::resolve_game_dir(&s);
-    download::download_version(&version_id, &s.download_source, &dir).await
+    let emit: download::Emit = Arc::new(move |ev| {
+        let _ = app.emit("download-progress", ev);
+    });
+    let r = download::install_version(
+        &version_id,
+        &s.download_source,
+        &dir,
+        s.download_concurrency as usize,
+        cancel,
+        emit,
+    )
+    .await;
+    *state.cancel.lock().unwrap() = None;
+    r
+}
+
+#[tauri::command]
+fn cancel_download(state: State<'_, DownloadState>) -> bool {
+    if let Some(c) = state.cancel.lock().unwrap().as_ref() {
+        c.store(true, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+#[tauri::command]
+fn rename_version(old: String, new: String) -> Result<(), String> {
+    let s = config::load_settings();
+    download::rename_version(&config::resolve_game_dir(&s), &old, &new)
+}
+
+#[tauri::command]
+fn delete_version(id: String) -> Result<(), String> {
+    let s = config::load_settings();
+    download::delete_version(&config::resolve_game_dir(&s), &id)
 }
 
 #[tauri::command]
 fn detect_java() -> launch::JavaInfo {
     let s = config::load_settings();
     launch::detect_java(&s.java_path)
+}
+
+#[tauri::command]
+async fn scan_java() -> Vec<launch::JavaInfo> {
+    tokio::task::spawn_blocking(launch::scan_java)
+        .await
+        .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+struct MemoryInfo {
+    available_mb: u64,
+    auto_mb: u32,
+}
+
+#[tauri::command]
+fn system_memory() -> MemoryInfo {
+    let a = launch::available_memory_mb();
+    MemoryInfo {
+        available_mb: a,
+        auto_mb: launch::auto_memory_mb(a),
+    }
 }
 
 #[tauri::command]
@@ -94,9 +184,57 @@ fn open_game_dir() -> Result<(), String> {
     launch::open_game_dir(&s)
 }
 
+#[tauri::command]
+fn open_data_dir() -> Result<(), String> {
+    launch::open_path(&config::data_dir())
+}
+
 #[derive(Serialize)]
-struct OkMsg {
-    ok: bool,
+struct AppInfo {
+    version: String,
+    data_dir: String,
+    settings_file: String,
+    game_dir: String,
+}
+
+#[tauri::command]
+fn app_info() -> AppInfo {
+    let s = config::load_settings();
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").into(),
+        data_dir: config::data_dir().to_string_lossy().into(),
+        settings_file: config::settings_path().to_string_lossy().into(),
+        game_dir: config::resolve_game_dir(&s).to_string_lossy().into(),
+    }
+}
+
+/// 自定义背景：读取本地图片为 data URL（避免开放 asset 协议的文件系统范围）。
+#[tauri::command]
+fn read_image_data_url(path: String) -> Result<String, String> {
+    use base64::Engine;
+    let p = std::path::Path::new(&path);
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    if meta.len() > 20 * 1024 * 1024 {
+        return Err("图片过大（>20MB）".into());
+    }
+    let mime = match p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("bmp") => "image/bmp",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => return Err("不支持的图片格式".into()),
+    };
+    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -105,6 +243,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .manage(DownloadState::default())
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_settings,
@@ -112,13 +251,24 @@ pub fn run() {
             offline_login,
             yggdrasil_login,
             logout,
+            microsoft_login,
+            switch_account,
+            remove_account,
             get_download_sources,
             list_remote_versions,
             list_local_versions,
             download_version,
+            cancel_download,
+            rename_version,
+            delete_version,
             detect_java,
+            scan_java,
+            system_memory,
             launch_game,
             open_game_dir,
+            open_data_dir,
+            app_info,
+            read_image_data_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
