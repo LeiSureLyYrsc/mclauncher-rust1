@@ -833,7 +833,7 @@ function openDlg(id, repair) {
   const host = $("#dlgHost");
   host.innerHTML = `
     <div class="dlg" id="dlg">
-      <div class="dlg-title" id="dlgTitle">${repair ? "正在补全" : "正在更新"} ${esc(id)}</div>
+      <div class="dlg-title" id="dlgTitle" data-tauri-drag-region>${repair ? "正在补全" : "正在更新"} ${esc(id)}</div>
       <table class="dlg-table">
         <thead><tr><th>项目</th><th style="text-align:right">文件</th><th style="text-align:right">大小</th><th>状态</th><th>进度</th></tr></thead>
         <tbody id="dlgRows">
@@ -952,7 +952,7 @@ function openLaunchDlg(id) {
   const host = $("#dlgHost");
   host.innerHTML = `
     <div class="dlg" id="dlg" data-kind="launch">
-      <div class="dlg-title" id="dlgTitle">正在启动 ${esc(id)}</div>
+      <div class="dlg-title" id="dlgTitle" data-tauri-drag-region>正在启动 ${esc(id)}</div>
       <table class="dlg-table">
         <thead><tr><th>步骤</th><th>状态</th><th>详情</th></tr></thead>
         <tbody id="dlgRows">

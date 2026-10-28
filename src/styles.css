@@ -122,7 +122,7 @@ html, body {
 .maximized .credit { left: 4px; bottom: 4px; }
 
 /* 窗口三按钮：24×24，与原版关闭 X 同风格（白 #E6FFFFFF 2px 线条，悬停 0.75） */
-.win-btns { position: absolute; right: 14px; top: 4px; height: 24px; display: flex; gap: 0; z-index: 95; } /* 高于下载页(90)，低于设置/弹窗 */
+.win-btns { position: absolute; right: 14px; top: 4px; height: 24px; display: flex; gap: 0; z-index: 420; } /* 始终高于弹层，顶栏可关窗 */
 .win-btn {
   width: 24px; height: 24px; background: transparent; border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center; padding: 0;
@@ -140,8 +140,9 @@ html, body {
 .main-status.show { display: block; }
 
 .drag-region {
+  /* 顶栏拖动区始终在弹层之上，避免 overlay/dlg 遮罩挡住 data-tauri-drag-region */
   position: absolute; left: 6px; top: 6px; right: 90px; height: 36px;
-  z-index: 5;
+  z-index: 410;
 }
 .no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
 
@@ -157,7 +158,11 @@ html, body {
 .ctx-item:hover { background: #3a7eb8; color: #fff; }
 .ctx-sep { height: 1px; background: #c0c8cc; margin: 3px 6px; }
 
-.overlay-host { position: absolute; inset: 0; z-index: 100; display: none; }
+.overlay-host {
+  /* 从顶栏下方起铺，不盖住 drag-region / win-btns（约 top 0–42） */
+  position: absolute; left: 0; right: 0; bottom: 0; top: 42px;
+  z-index: 100; display: none;
+}
 .overlay-host.show { display: block; }
 
 /* Overlay 698×268，居中（720×450 下即原版 (11,91)）— #9474C2E5 → #94A6DAEF, radius 5.5 */
@@ -278,7 +283,11 @@ select.field { padding: 0 2px; }
 #btnDlInstall { right: 14px; }
 
 /* 消息框 320×150：#BCE1F0 → #F5FBFD */
-.msg-host { position: absolute; inset: 0; z-index: 300; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.12); }
+.msg-host {
+  position: absolute; left: 0; right: 0; bottom: 0; top: 42px;
+  z-index: 300; display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.12);
+}
 .msg-host.show { display: flex; }
 .msg-box {
   position: relative; width: 320px; min-height: 150px; padding: 10px 14px 46px;
@@ -295,7 +304,10 @@ select.field { padding: 0 2px; }
 .msg-box .field { width: 100%; margin-top: 8px; }
 
 /* 下载进度弹窗（正在更新） */
-.dlg-host { position: absolute; inset: 0; z-index: 250; display: none; background: rgba(0,0,0,0.18); }
+.dlg-host {
+  position: absolute; left: 0; right: 0; bottom: 0; top: 42px;
+  z-index: 250; display: none; background: rgba(0,0,0,0.18);
+}
 .dlg-host.show { display: block; }
 .dlg {
   position: absolute; left: calc(50% - 280px); top: calc(50% - 165px); width: 560px; height: 330px;
@@ -304,7 +316,12 @@ select.field { padding: 0 2px; }
   box-shadow: 0 0 0 5px rgba(0,0,0,0.078), 0 0 0 10px rgba(0,0,0,0.118);
   font-size: 12px; color: #10222F;
 }
-.dlg-title { position: absolute; left: 14px; top: 9px; font-size: 14px; color: #0B2E3F; }
+.dlg-title {
+  position: absolute; left: 0; top: 0; right: 0; height: 32px;
+  padding: 9px 14px 0;
+  font-size: 14px; color: #0B2E3F;
+  cursor: default;
+}
 .dlg-table { position: absolute; left: 14px; top: 36px; width: 532px; border-collapse: collapse; }
 .dlg-table th, .dlg-table td { height: 22px; text-align: left; padding: 0 6px; font-weight: normal; white-space: nowrap; }
 .dlg-table th { color: #173C44; font-size: 11px; border-bottom: 1px solid rgba(23,60,68,0.27); }
@@ -333,7 +350,7 @@ select.field { padding: 0 2px; }
 .dlg-msg { position: absolute; left: 14px; top: 204px; width: 532px; height: 76px; line-height: 18px; overflow: hidden; white-space: pre-wrap; word-break: break-all; }
 
 /* 下载页返回：放在窗口三按钮左侧，避免与窗口关闭 X 混淆 */
-.dl-back { position: absolute; right: 96px; top: 4px; height: 24px; padding: 0 8px; z-index: 3;
+.dl-back { position: absolute; right: 96px; top: 4px; height: 24px; padding: 0 8px; z-index: 415;
   background: transparent; border: none; color: rgba(255,255,255,0.902); font-size: 13px; cursor: pointer; }
 .dl-back:hover { opacity: 0.75; }
 .maximized .dl-back { right: 92px; }
