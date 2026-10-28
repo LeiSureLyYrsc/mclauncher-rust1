@@ -364,6 +364,7 @@ pub fn run() {
         .manage(DownloadState::default())
         .manage(WinTracker(Arc::new(winstate::Tracker::default())))
         .setup(|app| {
+            config::ensure_layout_migrated();
             restore_window_state(app);
             Ok(())
         })

@@ -1,4 +1,4 @@
-//! 窗口状态记忆：位置、尺寸、最大化，存于 data/window-state.json。
+//! 窗口状态记忆：位置、尺寸、最大化，存于 melody-launcher/window-state.json。
 //! 本模块只含纯逻辑与文件读写（不依赖 tauri），便于单元测试；与窗口的交互在 lib.rs。
 use crate::config;
 use serde::{Deserialize, Serialize};

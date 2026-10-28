@@ -645,7 +645,7 @@ pub async fn launch_game_with_progress(
     match wait_early_exit(&mut child, EARLY_EXIT_WINDOW).await {
         Some(code) => {
             let mut message = format!(
-                "游戏启动后立即退出（退出码 {code}），请开启调试模式查看输出日志（data\\输出日志.txt）"
+                "游戏启动后立即退出（退出码 {code}），请开启调试模式查看输出日志（melody-launcher\\输出日志.txt）"
             );
             if settings.debug_mode {
                 let tail = log_tail(&log, 15);
