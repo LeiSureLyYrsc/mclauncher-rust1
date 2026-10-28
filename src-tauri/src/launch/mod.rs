@@ -21,6 +21,9 @@ pub struct LaunchResult {
     /// 启动后迅速退出时的退出码
     #[serde(default)]
     pub exit_code: Option<i32>,
+    /// 失败所在步骤（files | java | args | spawn | watch），成功为空
+    #[serde(default)]
+    pub failed_step: String,
 }
 
 /// 启动后观察窗口：此时间内进程退出视为「启动即退出」。
@@ -428,21 +431,71 @@ pub fn pick_java_exe(path: &str, debug: bool) -> String {
     path.to_string()
 }
 
+/// 启动进度步骤（推送给前端 `launch-progress` 事件）。
+pub const STEP_FILES: &str = "files";
+pub const STEP_JAVA: &str = "java";
+pub const STEP_ARGS: &str = "args";
+pub const STEP_SPAWN: &str = "spawn";
+pub const STEP_WATCH: &str = "watch";
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct LaunchProgress {
+    /// files | java | args | spawn | watch
+    pub step: String,
+    /// running | done | failed
+    pub state: String,
+    pub detail: String,
+}
+
+pub type LaunchEmit = std::sync::Arc<dyn Fn(LaunchProgress) + Send + Sync>;
+
+fn step(emit: &LaunchEmit, step: &str, state: &str, detail: impl Into<String>) {
+    emit(LaunchProgress {
+        step: step.into(),
+        state: state.into(),
+        detail: detail.into(),
+    });
+}
+
+/// 无进度回调的便捷入口（测试/旧调用）。
+#[allow(dead_code)]
 pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> LaunchResult {
-    let fail = |m: String| LaunchResult {
-        message: m,
-        ..Default::default()
+    let emit: LaunchEmit = std::sync::Arc::new(|_| {});
+    launch_game_with_progress(settings, account, emit).await
+}
+
+/// 创建（必要时）并返回本次启动的 --gameDir 目录。
+pub fn prepare_run_dir(game_dir: &Path, version_id: &str, isolation: bool) -> Result<PathBuf, String> {
+    let d = config::run_dir(game_dir, version_id, isolation);
+    config::ensure_dir(&d).map_err(|e| format!("无法创建游戏运行目录 {}: {e}", d.display()))?;
+    Ok(d)
+}
+
+pub async fn launch_game_with_progress(
+    settings: &Settings,
+    account: Option<&Account>,
+    emit: LaunchEmit,
+) -> LaunchResult {
+    let fail_at = |s: &str, m: String| {
+        step(&emit, s, "failed", m.clone());
+        LaunchResult {
+            message: m,
+            failed_step: s.to_string(),
+            ..Default::default()
+        }
     };
+    // ---- 1. 检查游戏文件 ----
+    step(&emit, STEP_FILES, "running", "正在校验版本文件…");
     let game_dir = config::resolve_game_dir(settings);
     let version_id = settings.selected_version.trim();
     if version_id.is_empty() {
-        return fail("未选择版本，请先在下载中心安装并选择版本".into());
+        return fail_at(STEP_FILES, "未选择版本，请先在下载中心安装并选择版本".into());
     }
     let versions_dir = game_dir.join("versions").join(version_id);
     let jar_path = versions_dir.join(format!("{version_id}.jar"));
     let json_path = versions_dir.join(format!("{version_id}.json"));
     if !json_path.exists() {
-        return fail(format!("缺少版本元数据，请前往下载中心安装 {version_id}"));
+        return fail_at(STEP_FILES, format!("缺少版本元数据，请前往下载中心安装 {version_id}"));
     }
     // 启动前预检：库（仅本平台）、client jar、资源索引及全部资源对象的存在性与大小
     let precheck = {
@@ -453,20 +506,19 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
             .map_err(|e| e.to_string())
             .and_then(|r| r)
     };
-    match precheck {
+    let checked = match precheck {
         Ok(r) if !r.ok => {
+            let message = format!("检测到 {} 个缺失文件（{}），是否补全？", r.missing, r.summary());
+            step(&emit, STEP_FILES, "failed", message.clone());
             return LaunchResult {
                 ok: false,
                 command: String::new(),
-                message: format!(
-                    "检测到 {} 个缺失文件（{}），是否补全？",
-                    r.missing,
-                    r.summary()
-                ),
+                message,
                 need_repair: true,
                 missing: r.missing,
                 missing_by_category: r.missing_by_category,
                 exit_code: None,
+                failed_step: STEP_FILES.into(),
             };
         }
         Ok(r) => {
@@ -474,36 +526,60 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
                 // 旧版本启动器安装、但文件已齐全：补写完成标记
                 let _ = download::write_install_marker(&game_dir, version_id, r.checked as usize);
             }
+            r.checked
         }
-        Err(e) => return fail(e),
-    }
+        Err(e) => return fail_at(STEP_FILES, e),
+    };
     if !jar_path.exists() {
-        return fail(format!("缺少客户端 jar，请前往下载中心安装 {version_id}"));
+        return fail_at(STEP_FILES, format!("缺少客户端 jar，请前往下载中心安装 {version_id}"));
     }
     let vj = match download::load_local_version_json(&game_dir, version_id) {
         Ok(v) => v,
-        Err(e) => return fail(e),
+        Err(e) => return fail_at(STEP_FILES, e),
     };
     if vj.main_class.is_empty() {
-        return fail("版本 json 缺少 mainClass".into());
+        return fail_at(STEP_FILES, "版本 json 缺少 mainClass".into());
     }
-    let java_info = detect_java(&settings.java_path);
-    if !java_info.found {
-        return fail("未检测到 Java。请在 设置 → Java 中填写路径或点「查找java」。".into());
-    }
-    let session = account.cloned().unwrap_or_else(|| crate::auth::offline_login("Player"));
+    step(&emit, STEP_FILES, "done", format!("{checked} 个文件完整"));
 
+    // ---- 2. 检查 / 定位 Java ----
+    step(&emit, STEP_JAVA, "running", "正在定位 Java…");
+    let java_info = {
+        let p = settings.java_path.clone();
+        tokio::task::spawn_blocking(move || detect_java(&p))
+            .await
+            .unwrap_or(JavaInfo { found: false, path: String::new(), version: String::new() })
+    };
+    if !java_info.found {
+        return fail_at(STEP_JAVA, "未检测到 Java。请在 设置 → Java 中填写路径或点「查找java」。".into());
+    }
+    step(
+        &emit,
+        STEP_JAVA,
+        "done",
+        if java_info.version.is_empty() {
+            java_info.path.clone()
+        } else {
+            format!("Java {}", java_info.version)
+        },
+    );
+
+    // ---- 3. 构建启动参数 ----
+    step(&emit, STEP_ARGS, "running", "正在构建启动参数…");
+    let session = account.cloned().unwrap_or_else(|| crate::auth::offline_login("Player"));
     let authlib_jar = if session.mode == "authlib" && !session.authlib_api.is_empty() {
+        step(&emit, STEP_ARGS, "running", "正在准备 authlib-injector…");
         match download::ensure_authlib_jar().await {
             Ok(j) => Some(j),
-            Err(e) => return fail(format!("准备 authlib-injector 失败: {e}")),
+            Err(e) => return fail_at(STEP_ARGS, format!("准备 authlib-injector 失败: {e}")),
         }
     } else {
         None
     };
-
-    let run_dir = config::run_dir(&game_dir, version_id, settings.version_isolation);
-    let _ = config::ensure_dir(&run_dir);
+    let run_dir = match prepare_run_dir(&game_dir, version_id, settings.version_isolation) {
+        Ok(d) => d,
+        Err(e) => return fail_at(STEP_ARGS, e),
+    };
     let memory_mb = effective_memory_mb(settings);
     let all_args = build_args(&LaunchPlan {
         settings,
@@ -516,7 +592,18 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
     });
     let java = pick_java_exe(&java_info.path, settings.debug_mode);
     let cmd_preview = format!("{} {}", java, all_args.join(" "));
+    step(
+        &emit,
+        STEP_ARGS,
+        "done",
+        format!(
+            "内存 {memory_mb} MB · {}",
+            if settings.version_isolation { "版本隔离" } else { "共享 .minecraft" }
+        ),
+    );
 
+    // ---- 4. 启动进程 ----
+    step(&emit, STEP_SPAWN, "running", "正在启动 Java 进程…");
     let mut cmd = Command::new(&java);
     cmd.args(&all_args).current_dir(&run_dir);
     let log = config::data_dir().join("输出日志.txt");
@@ -530,7 +617,7 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
                     cmd.stderr(f2);
                 }
             }
-            Err(e) => return fail(format!("无法创建日志文件: {e}")),
+            Err(e) => return fail_at(STEP_SPAWN, format!("无法创建日志文件: {e}")),
         }
     }
     #[cfg(windows)]
@@ -538,40 +625,54 @@ pub async fn launch_game(settings: &Settings, account: Option<&Account>) -> Laun
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    match cmd.spawn() {
-        Ok(mut child) => match wait_early_exit(&mut child, EARLY_EXIT_WINDOW).await {
-            Some(code) => {
-                let mut message = format!(
-                    "游戏启动后立即退出（退出码 {code}），请开启调试模式查看输出日志（data\\输出日志.txt）"
-                );
-                if settings.debug_mode {
-                    let tail = log_tail(&log, 15);
-                    if !tail.trim().is_empty() {
-                        message.push_str("\n\n");
-                        message.push_str(&tail);
-                    }
-                }
-                LaunchResult {
-                    ok: false,
-                    command: cmd_preview,
-                    message,
-                    exit_code: Some(code),
-                    ..Default::default()
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let mut r = fail_at(STEP_SPAWN, format!("启动失败: {e}"));
+            r.command = cmd_preview;
+            return r;
+        }
+    };
+    step(&emit, STEP_SPAWN, "done", format!("PID {}", child.id()));
+
+    // ---- 5. 等待游戏窗口 / 观察期 ----
+    step(
+        &emit,
+        STEP_WATCH,
+        "running",
+        format!("观察 {} 秒内是否异常退出…", EARLY_EXIT_WINDOW.as_secs()),
+    );
+    match wait_early_exit(&mut child, EARLY_EXIT_WINDOW).await {
+        Some(code) => {
+            let mut message = format!(
+                "游戏启动后立即退出（退出码 {code}），请开启调试模式查看输出日志（data\\输出日志.txt）"
+            );
+            if settings.debug_mode {
+                let tail = log_tail(&log, 15);
+                if !tail.trim().is_empty() {
+                    message.push_str("\n\n");
+                    message.push_str(&tail);
                 }
             }
-            None => LaunchResult {
+            step(&emit, STEP_WATCH, "failed", format!("进程已退出（退出码 {code}）"));
+            LaunchResult {
+                ok: false,
+                command: cmd_preview,
+                message,
+                exit_code: Some(code),
+                failed_step: STEP_WATCH.into(),
+                ..Default::default()
+            }
+        }
+        None => {
+            step(&emit, STEP_WATCH, "done", "进程运行正常");
+            LaunchResult {
                 ok: true,
                 command: cmd_preview,
                 message: format!("已启动 {version_id}（内存 {memory_mb} MB）"),
                 ..Default::default()
-            },
-        },
-        Err(e) => LaunchResult {
-            ok: false,
-            command: cmd_preview,
-            message: format!("启动失败: {e}"),
-            ..Default::default()
-        },
+            }
+        }
     }
 }
 
@@ -730,7 +831,7 @@ mod tests {
             "id":"1.20.1","mainClass":"net.minecraft.client.main.Main","type":"release",
             "assetIndex":{"id":"5","sha1":"","size":0,"url":""},
             "arguments":{
-              "game":["--username","${auth_player_name}","--uuid","${auth_uuid}","--gameDir","${game_directory}",
+              "game":["--username","${auth_player_name}","--uuid","${auth_uuid}","--gameDir","${game_directory}","--assetsDir","${assets_root}",
                 {"rules":[{"action":"allow","features":{"is_demo_user":true}}],"value":"--demo"},
                 {"rules":[{"action":"allow","features":{"has_custom_resolution":true}}],"value":["--width","${resolution_width}","--height","${resolution_height}"]}],
               "jvm":[{"rules":[{"action":"allow","os":{"name":"osx"}}],"value":["-XstartOnFirstThread"]},"-cp","${classpath}"]
@@ -752,6 +853,106 @@ mod tests {
         })
     }
 
+    fn arg_after(a: &[String], flag: &str) -> String {
+        let i = a.iter().position(|x| x == flag).unwrap_or_else(|| panic!("missing {flag}"));
+        a[i + 1].clone()
+    }
+
+    #[test]
+    fn isolation_off_uses_shared_game_dir() {
+        let mut s = Settings::default();
+        s.version_isolation = false;
+        let acc = crate::auth::offline_login("Steve");
+        let a = plan_args(&s, &acc, None);
+        assert_eq!(Path::new(&arg_after(&a, "--gameDir")), Path::new("/mc"));
+        assert_eq!(Path::new(&arg_after(&a, "--assetsDir")), Path::new("/mc").join("assets"));
+        let natives = Path::new("/mc").join("versions").join("1.20.1").join("natives");
+        assert!(a.contains(&format!("-Djava.library.path={}", natives.display())));
+    }
+
+    #[test]
+    fn isolation_on_uses_version_dir_but_shared_assets_and_libs() {
+        let mut s = Settings::default();
+        s.version_isolation = true;
+        let acc = crate::auth::offline_login("Steve");
+        let a = plan_args(&s, &acc, None);
+        let vdir = Path::new("/mc").join("versions").join("1.20.1");
+        assert_eq!(Path::new(&arg_after(&a, "--gameDir")), vdir.as_path());
+        // 资源与库仍共享
+        assert_eq!(Path::new(&arg_after(&a, "--assetsDir")), Path::new("/mc").join("assets"));
+        let cp = arg_after(&a, "-cp");
+        // classpath 不受隔离影响：客户端 jar 仍取自共享 versions 目录
+        assert_eq!(Path::new(&cp), vdir.join("1.20.1.jar").as_path(), "{cp}");
+        assert!(a.contains(&format!("-Djava.library.path={}", vdir.join("natives").display())));
+    }
+
+    #[test]
+    fn isolation_default_is_on() {
+        assert!(Settings::default().version_isolation);
+    }
+
+    #[test]
+    fn prepare_run_dir_creates_dirs() {
+        let g = std::env::temp_dir().join(format!("mcl-rundir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&g);
+        std::fs::create_dir_all(&g).unwrap();
+        let on = prepare_run_dir(&g, "1.20.1", true).unwrap();
+        assert_eq!(on, g.join("versions").join("1.20.1"));
+        assert!(on.is_dir());
+        let off = prepare_run_dir(&g, "1.20.1", false).unwrap();
+        assert_eq!(off, g);
+        assert!(off.is_dir());
+        // 已有数据不被破坏
+        std::fs::write(on.join("options.txt"), "lang:zh_cn").unwrap();
+        prepare_run_dir(&g, "1.20.1", true).unwrap();
+        assert_eq!(std::fs::read_to_string(on.join("options.txt")).unwrap(), "lang:zh_cn");
+        let _ = std::fs::remove_dir_all(&g);
+    }
+
+    #[tokio::test]
+    async fn launch_progress_reports_failed_files_step() {
+        let g = std::env::temp_dir().join(format!("mcl-launch-prog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&g);
+        let v = g.join("versions").join("1.0");
+        std::fs::create_dir_all(&v).unwrap();
+        std::fs::write(
+            v.join("1.0.json"),
+            r#"{"id":"1.0","mainClass":"M","downloads":{"client":{"sha1":"","size":3,"url":"u"}},"assetIndex":{"id":"1","sha1":"","size":5,"url":"u"}}"#,
+        )
+        .unwrap();
+        let mut s = Settings::default();
+        s.game_dir = g.to_string_lossy().to_string();
+        s.selected_version = "1.0".into();
+        let evs = std::sync::Arc::new(std::sync::Mutex::new(Vec::<LaunchProgress>::new()));
+        let e2 = evs.clone();
+        let emit: LaunchEmit = std::sync::Arc::new(move |e| e2.lock().unwrap().push(e));
+        let r = launch_game_with_progress(&s, None, emit).await;
+        assert!(r.need_repair);
+        assert_eq!(r.failed_step, STEP_FILES);
+        let evs = evs.lock().unwrap();
+        assert_eq!(evs.first().unwrap().state, "running");
+        let last = evs.last().unwrap();
+        assert_eq!((last.step.as_str(), last.state.as_str()), (STEP_FILES, "failed"));
+        assert!(!evs.iter().any(|e| e.step == STEP_JAVA), "后续步骤不应开始");
+        let _ = std::fs::remove_dir_all(&g);
+    }
+
+    #[tokio::test]
+    async fn launch_progress_no_version_fails_first_step() {
+        let mut s = Settings::default();
+        s.selected_version = String::new();
+        let n = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n2 = n.clone();
+        let emit: LaunchEmit = std::sync::Arc::new(move |e| {
+            assert_eq!(e.step, STEP_FILES);
+            n2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let r = launch_game_with_progress(&s, None, emit).await;
+        assert!(!r.ok);
+        assert_eq!(r.failed_step, STEP_FILES);
+        assert_eq!(n.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
     #[test]
     fn offline_args_basic() {
         let s = Settings::default();
@@ -763,9 +964,9 @@ mod tests {
         let w = a.iter().position(|x| x == "--width").unwrap();
         assert_eq!(a[w + 1], "854");
         assert!(!a.iter().any(|x| x.starts_with("-javaagent")));
-        // no isolation: gameDir is root
+        // 默认开启版本隔离：gameDir 为版本目录
         let g = a.iter().position(|x| x == "--gameDir").unwrap();
-        assert_eq!(a[g + 1], "/mc");
+        assert_eq!(Path::new(&a[g + 1]), Path::new("/mc").join("versions").join("1.20.1"));
     }
 
     #[test]

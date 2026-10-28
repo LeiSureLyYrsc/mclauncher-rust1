@@ -2,12 +2,13 @@ mod auth;
 mod config;
 mod download;
 mod launch;
+mod winstate;
 
 use config::{Account, Settings};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 /// 当前下载任务的取消标志（同一时间只允许一个安装任务）。
 #[derive(Default)]
@@ -201,11 +202,98 @@ fn system_memory() -> MemoryInfo {
     }
 }
 
+/// 启动游戏：各步骤通过 `launch-progress` 事件推送给前端启动进度窗口。
 #[tauri::command]
-async fn launch_game() -> launch::LaunchResult {
+async fn launch_game(app: tauri::AppHandle) -> launch::LaunchResult {
     let s = config::load_settings();
     let accounts = auth::list();
-    launch::launch_game(&s, accounts.current.as_ref()).await
+    let emit: launch::LaunchEmit = Arc::new(move |ev: launch::LaunchProgress| {
+        let _ = app.emit("launch-progress", ev);
+    });
+    launch::launch_game_with_progress(&s, accounts.current.as_ref(), emit).await
+}
+
+// ---------------- 窗口状态记忆 ----------------
+
+/// 与 tauri.conf.json 中 minWidth / minHeight 一致（逻辑像素）。
+const MIN_WINDOW: (f64, f64) = (720.0, 450.0);
+
+struct WinTracker(Arc<winstate::Tracker>);
+
+fn snapshot_window(w: &tauri::Window, t: &winstate::Tracker) -> Option<u64> {
+    if w.is_minimized().unwrap_or(false) {
+        return None; // 最小化时的位置/尺寸无意义
+    }
+    let maximized = w.is_maximized().unwrap_or(false);
+    let geom = match (w.outer_position(), w.inner_size()) {
+        (Ok(p), Ok(sz)) => Some((p.x, p.y, sz.width, sz.height)),
+        _ => None,
+    };
+    Some(t.update(maximized, geom))
+}
+
+fn restore_window_state(app: &tauri::App) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    let tracker = app.state::<WinTracker>().0.clone();
+    let monitors: Vec<winstate::MonitorRect> = w
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| winstate::MonitorRect {
+            x: m.position().x,
+            y: m.position().y,
+            width: m.size().width,
+            height: m.size().height,
+            scale: m.scale_factor(),
+        })
+        .collect();
+    let restored = winstate::load(&winstate::state_path())
+        .and_then(|s| winstate::validate(&s, &monitors, MIN_WINDOW));
+    match restored {
+        Some(s) => {
+            let _ = w.set_size(tauri::PhysicalSize::new(s.width, s.height));
+            let _ = w.set_position(tauri::PhysicalPosition::new(s.x, s.y));
+            let _ = w.show();
+            if s.maximized {
+                let _ = w.maximize();
+            }
+            tracker.seed(s);
+        }
+        None => {
+            // 无记录 / 无效：默认尺寸并居中
+            let _ = w.set_size(tauri::LogicalSize::new(MIN_WINDOW.0, MIN_WINDOW.1));
+            let _ = w.center();
+            let _ = w.show();
+        }
+    }
+}
+
+fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if window.label() != "main" {
+        return;
+    }
+    let Some(t) = window.try_state::<WinTracker>() else { return };
+    let tracker = t.0.clone();
+    match event {
+        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+            if let Some(gen) = snapshot_window(window, &tracker) {
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(winstate::DEBOUNCE_MS)).await;
+                    if tracker.generation() == gen {
+                        let _ = tracker.flush(&winstate::state_path());
+                    }
+                });
+            }
+        }
+        tauri::WindowEvent::CloseRequested { .. } => {
+            snapshot_window(window, &tracker);
+            let _ = tracker.flush(&winstate::state_path());
+        }
+        tauri::WindowEvent::Destroyed => {
+            let _ = tracker.flush(&winstate::state_path());
+        }
+        _ => {}
+    }
 }
 
 #[tauri::command]
@@ -274,6 +362,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(DownloadState::default())
+        .manage(WinTracker(Arc::new(winstate::Tracker::default())))
+        .setup(|app| {
+            restore_window_state(app);
+            Ok(())
+        })
+        .on_window_event(on_window_event)
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_settings,

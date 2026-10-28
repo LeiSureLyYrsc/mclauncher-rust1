@@ -22,9 +22,13 @@ pub struct Settings {
     // ---- 游戏 ----
     #[serde(default)]
     pub game_dir: String,
-    /// 原版「游戏目录」单选：false = 保存到 .minecraft；true = 保存到 .minecraft\versions\版本名称\
-    #[serde(default)]
+    /// 版本隔离（默认开启）：true = 存档/模组/配置保存到 .minecraft\versions\版本名称\；
+    /// false = 共享 .minecraft 根目录。assets / libraries / versions 始终共享。
+    #[serde(default = "default_true")]
     pub version_isolation: bool,
+    /// 设置文件结构版本（用于一次性迁移）。
+    #[serde(default)]
+    pub settings_rev: u32,
     #[serde(default = "default_width")]
     pub window_width: u32,
     #[serde(default = "default_height")]
@@ -83,6 +87,8 @@ fn default_after_launch() -> String {
 fn default_true() -> bool {
     true
 }
+/// 当前设置结构版本：2 = 引入「版本隔离默认开启」。
+pub const SETTINGS_REV: u32 = 2;
 fn default_skin() -> String {
     "default".into()
 }
@@ -94,6 +100,16 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// 一次性迁移：旧版设置（rev < 2）中的 version_isolation=false 是旧默认值而非用户选择，
+    /// 迁移为新默认（开启）。只改设置，不移动/删除任何游戏数据；用户可随时在设置中关闭。
+    pub fn migrated(mut self) -> Self {
+        if self.settings_rev < 2 {
+            self.version_isolation = true;
+        }
+        self.settings_rev = SETTINGS_REV;
+        self
+    }
+
     /// 规范化：把越界值拉回合理范围（UI 与手改 json 都走这里）。
     pub fn normalized(mut self) -> Self {
         self.download_concurrency = self.download_concurrency.clamp(1, 64);
@@ -165,15 +181,18 @@ pub fn load_settings() -> Settings {
     if p.exists() {
         if let Ok(t) = fs::read_to_string(&p) {
             if let Ok(s) = serde_json::from_str::<Settings>(&t) {
-                return s.normalized();
+                return s.migrated().normalized();
             }
         }
     }
-    Settings::default()
+    Settings::default().migrated()
 }
 
 pub fn save_settings(s: &Settings) -> Result<(), String> {
-    let t = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
+    // 由 UI 保存的设置均为当前结构（避免下次加载时再次迁移覆盖用户选择）
+    let mut s = s.clone();
+    s.settings_rev = SETTINGS_REV;
+    let t = serde_json::to_string_pretty(&s).map_err(|e| e.to_string())?;
     fs::write(settings_path(), t).map_err(|e| e.to_string())
 }
 
@@ -245,6 +264,22 @@ mod tests {
         assert_eq!(s.download_concurrency, 64);
         assert_eq!(s.after_launch, "keep");
         assert_eq!(s.max_memory_mb, 2048);
+    }
+
+    #[test]
+    fn isolation_migration() {
+        // 旧文件（无 rev，保存过旧默认 false）→ 迁移为开启
+        let s: Settings = serde_json::from_str(r#"{"version_isolation":false}"#).unwrap();
+        let s = s.migrated();
+        assert!(s.version_isolation);
+        assert_eq!(s.settings_rev, SETTINGS_REV);
+        // 新文件中用户显式关闭 → 保持关闭
+        let s: Settings =
+            serde_json::from_str(r#"{"version_isolation":false,"settings_rev":2}"#).unwrap();
+        assert!(!s.migrated().version_isolation);
+        // 缺字段 → 默认开启
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.version_isolation);
     }
 
     #[test]
