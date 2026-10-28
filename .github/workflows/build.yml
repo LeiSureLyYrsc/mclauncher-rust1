@@ -154,23 +154,30 @@ jobs:
           base="${PORTABLE%.exe}"
           # 未压缩备用（体积较大；SmartScreen/杀软更友好时可选用）
           cp "$PORTABLE" "${base}-uncompressed.exe"
-          # 下载 UPX（宿主机为 x64，可压缩 PE32 / PE32+）
+          # 全程用 Git Bash 路径（勿让原生 Windows Python 读 /tmp 或混用盘符）
           UPX_VER=4.2.4
-          curl -fsSL "https://github.com/upx/upx/releases/download/v${UPX_VER}/upx-${UPX_VER}-win64.zip" -o /tmp/upx.zip
-          python -c "import zipfile; zipfile.ZipFile('/tmp/upx.zip').extractall('/tmp/upx-extract')"
-          UPX_BIN=$(find /tmp/upx-extract -name upx.exe -type f | head -1)
+          UPX_DIR="$GITHUB_WORKSPACE/.upx-tool"
+          rm -rf "$UPX_DIR"
+          mkdir -p "$UPX_DIR"
+          curl -fsSL "https://github.com/upx/upx/releases/download/v${UPX_VER}/upx-${UPX_VER}-win64.zip" -o "$UPX_DIR/upx.zip"
+          unzip -o "$UPX_DIR/upx.zip" -d "$UPX_DIR"
+          UPX_BIN=$(find "$UPX_DIR" -name upx.exe -type f | head -1)
           test -n "$UPX_BIN"
           echo "Using $UPX_BIN"
-          before=$(python -c "import os; print(os.path.getsize('$PORTABLE'))")
+          before=$(wc -c < "$PORTABLE" | tr -d ' ')
           # 推荐 --best --lzma；失败则从 uncompressed 还原后改用 --best
-          if "$UPX_BIN" --best --lzma --force "$PORTABLE"; then
+          set +e
+          "$UPX_BIN" --best --lzma --force "$PORTABLE"
+          upx_rc=$?
+          set -e
+          if [[ $upx_rc -eq 0 ]]; then
             echo "UPX: --best --lzma OK"
           else
-            echo "UPX: LZMA failed, fallback --best"
+            echo "UPX: LZMA failed (rc=$upx_rc), fallback --best"
             cp "${base}-uncompressed.exe" "$PORTABLE"
             "$UPX_BIN" --best --force "$PORTABLE"
           fi
-          after=$(python -c "import os; print(os.path.getsize('$PORTABLE'))")
+          after=$(wc -c < "$PORTABLE" | tr -d ' ')
           pct=$(( after * 100 / before ))
           echo "UPX size: ${before} -> ${after} bytes (${pct}% of original)"
           echo "==== out/ after UPX ===="
