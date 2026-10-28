@@ -7,6 +7,14 @@ const isTauri = !!(window.__TAURI_INTERNALS__ || T);
 
 /* ======================= 后端调用 / 浏览器预览 mock ======================= */
 const mockListeners = {};
+/* 预览模式：模拟启动进度事件（files → java → args → spawn → watch） */
+async function mockLaunch() {
+  const emit = (step, st, detail) => (mockListeners["launch-progress"] || []).forEach((cb) => cb({ payload: { step, state: st, detail } }));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const steps = [["files", "5147 个文件完整"], ["java", "Java 17.0.8"], ["args", "内存 4096 MB · 版本隔离"], ["spawn", "PID 1234"], ["watch", "进程运行正常"]];
+  for (const [k, d] of steps) { emit(k, "running", "…"); await wait(k === "watch" ? 1200 : 350); emit(k, "done", d); }
+  return { ok: true, command: "java ...", message: "已启动（预览模式）" };
+}
 async function invoke(cmd, args = {}) {
   if (!isTauri) return mockInvoke(cmd, args);
   if (T?.core?.invoke) return T.core.invoke(cmd, args);
@@ -43,7 +51,7 @@ async function pickPath(opts) {
 
 const mockDb = {
   settings: {
-    download_source: "bmclapi", download_concurrency: 32, game_dir: "", version_isolation: false,
+    download_source: "bmclapi", download_concurrency: 32, game_dir: "", version_isolation: true, settings_rev: 2,
     window_width: 854, window_height: 480, fullscreen: false, after_launch: "keep", debug_mode: false,
     selected_version: "1.20.1", java_path: "", memory_auto: true, max_memory_mb: 2048, jvm_args: "",
     skin: "default", background_path: "",
@@ -131,7 +139,7 @@ function mockInvoke(cmd, args) {
       { found: true, path: "C:\\Program Files\\Java\\jre1.8.0_381\\bin\\javaw.exe", version: 'java version "1.8.0_381"' },
     ],
     system_memory: () => ({ available_mb: 9830, auto_mb: 4096 }),
-    launch_game: () => ({ ok: false, command: "java ...", message: "预览模式" }),
+    launch_game: () => mockLaunch(),
     open_game_dir: () => null, open_data_dir: () => null,
     app_info: () => ({ version: "0.1.0", data_dir: "C:\\MCLauncher\\data", settings_file: "C:\\MCLauncher\\data\\settings.json", game_dir: "C:\\MCLauncher\\.minecraft" }),
     read_image_data_url: () => "/assets/backgrounds/sky.png",
@@ -559,7 +567,12 @@ function paneVersions(p) {
     <button class="btn sm" id="vDelete" style="left:580px;top:130px;width:90px;">删除选中游戏</button>
     <button class="btn sm" id="vRefresh" style="left:580px;top:162px;width:90px;">刷新</button>
     <button class="btn sm" id="vDownload" style="left:580px;top:194px;width:90px;">下载新版本</button>
-    <button class="btn sm" id="vRepair" style="left:160px;top:194px;width:150px;">检查并补全游戏文件</button>`;
+    <button class="btn sm" id="vRepair" style="left:160px;top:194px;width:150px;">检查并补全游戏文件</button>
+    <div class="abs" style="left:322px;top:198px;" title="开启：存档、模组、资源包、options.txt 等保存在 .minecraft\\versions\\版本名称\\（资源与库仍共享）；关闭：所有版本共享 .minecraft">${check("vIso", "版本隔离（各版本独立存档/模组）", state.settings.version_isolation)}</div>`;
+  $("#vIso").onchange = async (e) => {
+    const on = e.target.checked;
+    await saveSettings({ version_isolation: on }, on ? "已开启版本隔离：游戏目录 = versions\\<版本名>\\" : "已关闭版本隔离：所有版本共享 .minecraft");
+  };
   $$("#verList .li").forEach((li) => {
     li.onclick = () => { state.selVersion = li.dataset.v; $$("#verList .li").forEach((x) => x.classList.toggle("sel", x === li)); };
     li.ondblclick = () => $("#vUse").click();
@@ -925,25 +938,91 @@ async function askRepair(id, missing, cats) {
 }
 
 /* ============================== 启动 ============================== */
+const LAUNCH_STEPS = [
+  ["files", "检查游戏文件"],
+  ["java", "检查 / 定位 Java"],
+  ["args", "构建启动参数"],
+  ["spawn", "启动进程"],
+  ["watch", "等待游戏窗口 / 观察期"],
+];
+const LST_TEXT = { waiting: ["等待", "st-wait"], running: ["进行中", "st-run"], done: ["完成", "st-ok"], failed: ["失败", "st-err"] };
+let unlistenLaunch = null;
+
+function openLaunchDlg(id) {
+  const host = $("#dlgHost");
+  host.innerHTML = `
+    <div class="dlg" id="dlg" data-kind="launch">
+      <div class="dlg-title" id="dlgTitle">正在启动 ${esc(id)}</div>
+      <table class="dlg-table">
+        <thead><tr><th>步骤</th><th>状态</th><th>详情</th></tr></thead>
+        <tbody id="dlgRows">
+          ${LAUNCH_STEPS.map(([k, l]) => `<tr data-step="${k}"><td class="l-name">${l}</td><td class="st st-wait">等待</td><td class="l-detail"><span>-</span></td></tr>`).join("")}
+        </tbody>
+      </table>
+      <div class="dlg-total"><span class="pct" id="dlgPct">0 / ${LAUNCH_STEPS.length}</span><div class="bar" id="dlgBar"><i></i></div></div>
+      <div class="dlg-msg" id="dlgMsg">准备中…</div>
+    </div>`;
+  showFaded(host);
+}
+function updateLaunchDlg(ev) {
+  if (!$('#dlg[data-kind="launch"]')) return;
+  const tr = $(`#dlgRows tr[data-step="${ev.step}"]`);
+  if (!tr) return;
+  const [txt, cls] = LST_TEXT[ev.state] || LST_TEXT.waiting;
+  const td = $(".st", tr); td.textContent = txt; td.className = `st ${cls}`;
+  const sp = $(".l-detail span", tr); sp.textContent = ev.detail || "-"; sp.title = ev.detail || "";
+  const done = document.querySelectorAll("#dlgRows .st-ok").length;
+  $("#dlgBar i").style.width = (done / LAUNCH_STEPS.length) * 100 + "%";
+  $("#dlgBar").classList.toggle("err", ev.state === "failed");
+  $("#dlgPct").textContent = `${done} / ${LAUNCH_STEPS.length}`;
+  if (ev.state === "running") $("#dlgMsg").textContent = `${LAUNCH_STEPS.find(([k]) => k === ev.step)?.[1] || ""}：${ev.detail || ""}`;
+}
+function finishLaunchDlg(id, r) {
+  if (!$('#dlg[data-kind="launch"]')) return;
+  // 未收到失败事件（如后端异常）时，把正在进行的步骤标为失败
+  if (!r.ok) {
+    const failedStep = r.failed_step || $("#dlgRows .st-run")?.closest("tr")?.dataset.step;
+    if (failedStep && !$(`#dlgRows tr[data-step="${failedStep}"] .st-err`)) updateLaunchDlg({ step: failedStep, state: "failed", detail: r.message });
+  }
+  $("#dlgTitle").textContent = r.ok ? `游戏已启动 — ${id}` : r.need_repair ? `${id} 游戏文件不完整` : `${id} 启动失败`;
+  let msg = r.message || (r.ok ? "游戏已启动" : "无法启动");
+  if (!r.ok && r.exit_code != null && !/退出码/.test(msg)) msg = `退出码 ${r.exit_code}\n${msg}`;
+  if (!r.ok && !r.need_repair && r.command && r.exit_code == null && r.failed_step === "spawn") msg += `\n\n命令预览：\n${r.command}`;
+  if (r.ok) {
+    $("#dlgMsg").textContent = msg;
+  } else {
+    const detail = (r.missing_by_category || []).map((c) => `${c.label} ${c.count}`).join("、");
+    $("#dlgMsg").outerHTML = `<div class="dlg-failed"><div class="note" style="color:#C62828;">${r.need_repair ? `检测到 ${r.missing} 个缺失文件${detail ? `（${esc(detail)}）` : ""}，点击「补全」修复后再启动：` : "失败原因："}</div><textarea readonly>${esc(msg)}</textarea></div>`;
+  }
+  $("#dlg").insertAdjacentHTML("beforeend", `${r.need_repair ? `<button class="btn" id="dlgBtnRetry">补全</button>` : ""}<button class="btn" id="dlgBtnClose">关闭</button>`);
+  $("#dlgBtnClose").onclick = closeDlg;
+  if ($("#dlgBtnRetry")) $("#dlgBtnRetry").onclick = async () => { await closeDlg(); runInstall(id, true); };
+}
+
 async function doLaunch() {
+  if (state.launching || state.downloading) return;
+  const id = state.settings?.selected_version || "";
+  state.launching = true;
+  openLaunchDlg(id || "游戏");
+  if (unlistenLaunch) { unlistenLaunch(); unlistenLaunch = null; }
+  unlistenLaunch = await listen("launch-progress", (e) => { if (e.payload) updateLaunchDlg(e.payload); });
+  let r;
   try {
     setStatus("正在启动…", 0);
-    const r = await invoke("launch_game");
-    if (r.ok) {
-      setStatus(r.message || "已启动游戏");
-      const after = state.settings?.after_launch;
-      const w = await currentWindow();
-      if (after === "minimize" && w) w.minimize();
-      else if (after === "close") setTimeout(closeApp, 800);
-    } else if (r.need_repair) {
-      setStatus("");
-      const id = state.settings?.selected_version;
-      if (id && (await askRepair(id, r.missing, r.missing_by_category))) runInstall(id, true);
-    } else {
-      setStatus("");
-      showMessage("启动", (r.message || "无法启动") + (r.command && r.exit_code == null ? `\n\n命令预览：\n${r.command}` : ""));
-    }
-  } catch (e) { setStatus(""); showError(e); }
+    r = await invoke("launch_game");
+  } catch (e) {
+    r = { ok: false, message: errText(e) };
+  }
+  state.launching = false;
+  if (unlistenLaunch) { unlistenLaunch(); unlistenLaunch = null; }
+  setStatus(r.ok ? r.message || "已启动游戏" : "");
+  finishLaunchDlg(id || "游戏", r);
+  if (r.ok) {
+    const after = state.settings?.after_launch;
+    const w = await currentWindow();
+    if (after === "minimize" && w) w.minimize();
+    else if (after === "close") setTimeout(closeApp, 800);
+  }
 }
 function updateVersionBox() {
   const id = state.settings?.selected_version;

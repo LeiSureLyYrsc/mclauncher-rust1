@@ -327,6 +327,10 @@ select.field { padding: 0 2px; }
 .dlg .btn { top: 290px; width: 90px; height: 28px; }
 #dlgBtnCancel, #dlgBtnClose { right: 14px; }
 #dlgBtnRetry { right: 114px; }
+/* 启动进度窗口（复用下载窗口样式） */
+.dlg[data-kind="launch"] .dlg-table td.l-name { width: 150px; }
+.dlg-table td.l-detail span { display: inline-block; max-width: 290px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; font-size: 11px; color: #173C44; }
+.dlg-msg { position: absolute; left: 14px; top: 204px; width: 532px; height: 76px; line-height: 18px; overflow: hidden; white-space: pre-wrap; word-break: break-all; }
 
 /* 下载页返回：放在窗口三按钮左侧，避免与窗口关闭 X 混淆 */
 .dl-back { position: absolute; right: 96px; top: 4px; height: 24px; padding: 0 8px; z-index: 3;

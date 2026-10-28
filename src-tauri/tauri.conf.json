@@ -22,6 +22,7 @@
         "decorations": false,
         "transparent": true,
         "center": true,
+        "visible": false,
         "shadow": false,
         "label": "main",
         "minimizable": true,
