@@ -122,7 +122,7 @@ html, body {
 .maximized .credit { left: 4px; bottom: 4px; }
 
 /* 窗口三按钮：24×24，与原版关闭 X 同风格（白 #E6FFFFFF 2px 线条，悬停 0.75） */
-.win-btns { position: absolute; right: 14px; top: 4px; height: 24px; display: flex; gap: 0; z-index: 420; } /* 始终高于弹层，顶栏可关窗 */
+.win-btns { position: absolute; right: 14px; top: 4px; height: 24px; display: flex; gap: 0; z-index: 95; } /* 高于下载页(90)；弹层已从 top:42 起铺，不挡按钮 */
 .win-btn {
   width: 24px; height: 24px; background: transparent; border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center; padding: 0;
@@ -140,9 +140,13 @@ html, body {
 .main-status.show { display: block; }
 
 .drag-region {
-  /* 顶栏拖动区始终在弹层之上，避免 overlay/dlg 遮罩挡住 data-tauri-drag-region */
+  /* 低于 download-page(90)，避免盖住「返回」；弹层 overlay/dlg/msg 已从 top:42 起铺，不挡本区 */
   position: absolute; left: 6px; top: 6px; right: 90px; height: 36px;
-  z-index: 410;
+  z-index: 50;
+}
+/* 下载中心打开时彻底禁用主拖动区（下载页自带 dl-titlebar 拖动），防止抢点击 */
+.stage:has(#downloadPage.show) .drag-region {
+  pointer-events: none;
 }
 .no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
 
@@ -249,8 +253,15 @@ select.field { padding: 0 2px; }
   background: linear-gradient(180deg, rgba(120,196,226,0.58), rgba(114,191,221,0.58));
   color: #fff; font-size: 13px; line-height: 29px; padding-left: 12px;
   text-shadow: 1px 1px 1px rgba(0,0,0,0.4);
+  -webkit-app-region: no-drag; app-region: no-drag;
 }
 .maximized .dl-titlebar { left: 0; top: 0; right: 0; }
+/* 仅左侧可拖，右侧留给「返回」与窗口按钮 */
+.dl-titlebar-drag {
+  position: absolute; left: 0; top: 0; right: 170px; bottom: 0;
+  padding-left: 12px; line-height: 29px;
+}
+.maximized .dl-titlebar-drag { right: 164px; }
 .dl-card {
   position: absolute; left: 19px; top: 35px; right: 21px; bottom: 57px;
   background: rgba(235,240,247,0.98); border: 1px solid #C8D2D8;
@@ -350,7 +361,13 @@ select.field { padding: 0 2px; }
 .dlg-msg { position: absolute; left: 14px; top: 204px; width: 532px; height: 76px; line-height: 18px; overflow: hidden; white-space: pre-wrap; word-break: break-all; }
 
 /* 下载页返回：放在窗口三按钮左侧，避免与窗口关闭 X 混淆 */
-.dl-back { position: absolute; right: 96px; top: 4px; height: 24px; padding: 0 8px; z-index: 415;
-  background: transparent; border: none; color: rgba(255,255,255,0.902); font-size: 13px; cursor: pointer; }
+.dl-back {
+  /* 高于同页 dl-titlebar（亦为 drag-region），并 no-drag，保证可点 */
+  position: absolute; right: 96px; top: 4px; height: 24px; padding: 0 10px;
+  z-index: 5;
+  background: transparent; border: none; color: rgba(255,255,255,0.902);
+  font-size: 13px; cursor: pointer;
+  -webkit-app-region: no-drag; app-region: no-drag;
+}
 .dl-back:hover { opacity: 0.75; }
 .maximized .dl-back { right: 92px; }

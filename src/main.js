@@ -767,7 +767,7 @@ async function showDownload() {
   const page = $("#downloadPage");
   page.innerHTML = `
     <div class="content-card"></div>
-    <div class="dl-titlebar" data-tauri-drag-region>下载中心</div>
+    <div class="dl-titlebar"><div class="dl-titlebar-drag" data-tauri-drag-region>下载中心</div></div>
     <div class="dl-card">
       <div class="dl-head">
         <span style="width:62px;">类型</span><span style="width:152px;">版本</span><span>时间</span>
@@ -787,7 +787,15 @@ async function showDownload() {
     </div>
     <button class="dl-back no-drag" id="dlBack" title="返回主界面">‹ 返回</button>`;
   showFaded(page);
-  $("#dlBack").onclick = () => hideFaded(page);
+  // 主 .drag-region 可能叠在返回上：CSS :has 已禁 pointer-events；此处再保证关闭逻辑可靠
+  const back = $("#dlBack");
+  if (back) {
+    back.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideFaded(page);
+    });
+  }
   $("#btnDlCommunity").onclick = () => openUrl("https://www.mcmod.cn/").catch(showError);
   $("#btnDlInstall").onclick = () => installSelected();
   $$('input[name="dlType"]').forEach((r) => { r.onchange = () => renderRemoteList(); });
