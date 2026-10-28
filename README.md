@@ -58,7 +58,12 @@ npm install
 npm run tauri dev
 ```
 
-本地数据目录：`data/`（`settings.json`、`accounts.json`、`.minecraft/`、`authlib-injector.jar`）。**不要把含令牌的 accounts 提交到 git**。
+目录布局（与 exe 同目录）：
+
+- `.minecraft/` — 游戏数据（versions / libraries / assets / 存档等，可与其他启动器共用）
+- `melody-launcher/` — 启动器自身数据（`settings.json`、`accounts.json`、`window-state.json`、`authlib-injector.jar`、`输出日志.txt` 等）
+
+首次启动若检测到旧版 `data/` 布局，会自动迁移到上述目录。**不要把含令牌的 accounts 提交到 git**。
 
 ### 构建
 
@@ -89,7 +94,7 @@ npm run tauri build
 -javaagent:authlib-injector.jar=<apiRoot>
 ```
 
-jar 首次会尝试从 BMCLAPI authlib-injector 镜像缓存到 `data/`。
+jar 首次会尝试从 BMCLAPI authlib-injector 镜像缓存到 `melody-launcher/`。
 
 ### 微软登录
 

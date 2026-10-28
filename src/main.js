@@ -141,7 +141,7 @@ function mockInvoke(cmd, args) {
     system_memory: () => ({ available_mb: 9830, auto_mb: 4096 }),
     launch_game: () => mockLaunch(),
     open_game_dir: () => null, open_data_dir: () => null,
-    app_info: () => ({ version: "0.1.0", data_dir: "C:\\MCLauncher\\data", settings_file: "C:\\MCLauncher\\data\\settings.json", game_dir: "C:\\MCLauncher\\.minecraft" }),
+    app_info: () => ({ version: "0.1.0", data_dir: "C:\\MCLauncher\\melody-launcher", settings_file: "C:\\MCLauncher\\melody-launcher\\settings.json", game_dir: "C:\\MCLauncher\\.minecraft" }),
     read_image_data_url: () => "/assets/backgrounds/sky.png",
   };
   const fn = m[cmd];
@@ -530,7 +530,7 @@ function paneGame(p) {
       ${radio("gAfter", "minimize", "最小化启动器", s.after_launch === "minimize")}
       ${radio("gAfter", "close", "关闭启动器", s.after_launch === "close")}
     </div>
-    <div class="abs" style="left:160px;top:180px;">${check("gDebug", "调试模式（以 java.exe 启动 minecraft，并输出 输出日志.txt）", s.debug_mode)}</div>
+    <div class="abs" style="left:160px;top:180px;">${check("gDebug", "调试模式（以 java.exe 启动 minecraft，并输出 melody-launcher\\输出日志.txt）", s.debug_mode)}</div>
     <button class="btn sm" id="gSave" style="left:580px;top:218px;width:90px;">保存设置</button>`;
   $("#gBrowse").onclick = async () => {
     const d = await pickPath({ directory: true, title: "选择 .minecraft 目录" });

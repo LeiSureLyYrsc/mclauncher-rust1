@@ -5,6 +5,9 @@ src-tauri/target/
 *.log
 data/**
 !data/.gitkeep
+melody-launcher/**
+!melody-launcher/.gitkeep
+.minecraft/
 .DS_Store
 Thumbs.db
 .idea/

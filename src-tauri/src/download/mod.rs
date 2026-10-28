@@ -1907,7 +1907,7 @@ pub fn delete_version(game_dir: &Path, id: &str) -> Result<(), String> {
     fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
-/// Ensure authlib-injector.jar cached under data/
+/// Ensure authlib-injector.jar cached under melody-launcher/
 pub async fn ensure_authlib_jar() -> Result<PathBuf, String> {
     let dest = config::data_dir().join("authlib-injector.jar");
     if dest.exists() && fs::metadata(&dest).map(|m| m.len() > 1000).unwrap_or(false) {
