@@ -144,6 +144,40 @@ jobs:
             test -f "out/${{ matrix.portable_name }}"
           fi
 
+      - name: UPX pack Windows portable
+        if: startsWith(matrix.platform, 'windows')
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORTABLE="out/${{ matrix.portable_name }}"
+          test -f "$PORTABLE"
+          base="${PORTABLE%.exe}"
+          # 未压缩备用（体积较大；SmartScreen/杀软更友好时可选用）
+          cp "$PORTABLE" "${base}-uncompressed.exe"
+          # 下载 UPX（宿主机为 x64，可压缩 PE32 / PE32+）
+          UPX_VER=4.2.4
+          curl -fsSL "https://github.com/upx/upx/releases/download/v${UPX_VER}/upx-${UPX_VER}-win64.zip" -o /tmp/upx.zip
+          python -c "import zipfile; zipfile.ZipFile('/tmp/upx.zip').extractall('/tmp/upx-extract')"
+          UPX_BIN=$(find /tmp/upx-extract -name upx.exe -type f | head -1)
+          test -n "$UPX_BIN"
+          echo "Using $UPX_BIN"
+          before=$(python -c "import os; print(os.path.getsize('$PORTABLE'))")
+          # 推荐 --best --lzma；失败则从 uncompressed 还原后改用 --best
+          if "$UPX_BIN" --best --lzma --force "$PORTABLE"; then
+            echo "UPX: --best --lzma OK"
+          else
+            echo "UPX: LZMA failed, fallback --best"
+            cp "${base}-uncompressed.exe" "$PORTABLE"
+            "$UPX_BIN" --best --force "$PORTABLE"
+          fi
+          after=$(python -c "import os; print(os.path.getsize('$PORTABLE'))")
+          pct=$(( after * 100 / before ))
+          echo "UPX size: ${before} -> ${after} bytes (${pct}% of original)"
+          echo "==== out/ after UPX ===="
+          ls -la out/
+          test -f "$PORTABLE"
+          test -f "${base}-uncompressed.exe"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}

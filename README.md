@@ -104,16 +104,18 @@ jar 首次会尝试从 BMCLAPI authlib-injector 镜像缓存到 `melody-launcher
 
 | 平台 | 产物 | 备注 |
 |------|------|------|
-| Windows x64 | NSIS / MSI + `MCLauncher-portable-windows-x64.exe` | 需要 WebView2；CI 使用 Evergreen bootstrapper |
-| Windows x86（32 位） | NSIS + `MCLauncher-portable-windows-x86.exe` | 同上；CI 目标 `i686-pc-windows-msvc` |
+| Windows x64 | NSIS / MSI + `MCLauncher-portable-windows-x64.exe`（UPX） | 需要 WebView2；CI 使用 Evergreen bootstrapper |
+| Windows x86（32 位） | NSIS + `MCLauncher-portable-windows-x86.exe`（UPX） | 同上；CI 目标 `i686-pc-windows-msvc` |
 | Linux | AppImage / deb | AppImage 相对接近「单文件」分发 |
 | macOS | `.app` / dmg | 非单一裸二进制 |
+
+Windows 便携版主产物已经过 **UPX**（`--best --lzma`）压缩以减小体积；同 artifact 另附 `MCLauncher-portable-windows-*-uncompressed.exe` 未压缩备用。UPX 可能触发 Windows SmartScreen / 杀软误报，若不信任带壳版请改用 uncompressed。NSIS / MSI 安装包未做 UPX。
 
 Tauri 应用依赖系统 WebView，无法在所有平台做到「绝对零依赖单文件」；文档与 workflow 已尽量提供便携产物。
 
 ## GitHub Actions
 
-`.github/workflows/build.yml`：矩阵含 **Windows x64**、**Windows x86（i686）**、Ubuntu、macOS，使用 `tauri-apps/tauri-action`，artifacts 名为 `mclauncher-windows-x64` / `mclauncher-windows-x86` / `mclauncher-linux-x64` / `mclauncher-macos`。CI 第一步会跑 `scripts/fetch-assets.sh` 拉取背景与 UI 小图。
+`.github/workflows/build.yml`：矩阵含 **Windows x64**、**Windows x86（i686）**、Ubuntu、macOS，使用 `tauri-apps/tauri-action`，artifacts 名为 `mclauncher-windows-x64` / `mclauncher-windows-x86` / `mclauncher-linux-x64` / `mclauncher-macos`。Windows 便携 exe 在上传前会 UPX 上壳（另附 uncompressed）。CI 第一步会跑 `scripts/fetch-assets.sh` 拉取背景与 UI 小图。
 
 ## 路线图
 
