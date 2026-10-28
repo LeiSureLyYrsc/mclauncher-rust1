@@ -14,11 +14,31 @@ jobs:
         include:
           - platform: windows-latest
             args: --bundles nsis,msi
+            rust_target: ""
+            out_dir: src-tauri/target/release
+            artifact_name: mclauncher-windows-x64
+            portable_name: MCLauncher-portable-windows-x64.exe
+          - platform: windows-latest
+            # 32-bit（i686）；NSIS 安装包 + portable；MSI 对非默认 target 偶发不稳，x86 以 nsis+exe 为主
+            args: --target i686-pc-windows-msvc --bundles nsis
+            rust_target: i686-pc-windows-msvc
+            out_dir: src-tauri/target/i686-pc-windows-msvc/release
+            artifact_name: mclauncher-windows-x86
+            portable_name: MCLauncher-portable-windows-x86.exe
           - platform: ubuntu-22.04
             args: --bundles appimage,deb
+            rust_target: ""
+            out_dir: src-tauri/target/release
+            artifact_name: mclauncher-linux-x64
+            portable_name: MCLauncher-linux-x64
           - platform: macos-latest
             args: --bundles app,dmg
+            rust_target: ""
+            out_dir: src-tauri/target/release
+            artifact_name: mclauncher-macos
+            portable_name: ""
     runs-on: ${{ matrix.platform }}
+    name: build (${{ matrix.artifact_name }})
     steps:
       - uses: actions/checkout@v4
 
@@ -42,10 +62,13 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          key: ${{ matrix.artifact_name }}
 
       - name: Install frontend deps
         run: npm ci
@@ -67,25 +90,62 @@ jobs:
       - name: Collect artifacts
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p out
-          B=src-tauri/target/release
+          B="${{ matrix.out_dir }}"
+          echo "Collecting from $B"
+          ls -la "$B" || true
+          ls -la "$B/bundle" 2>/dev/null || true
           case "${{ matrix.platform }}" in
             windows-*)
-              cp "$B/mclauncher-rust1.exe" out/MCLauncher-portable-windows-x64.exe
-              cp $B/bundle/nsis/*.exe out/ || true
-              cp $B/bundle/msi/*.msi out/ || true ;;
+              if [[ ! -f "$B/mclauncher-rust1.exe" ]]; then
+                echo "ERROR: missing portable exe at $B/mclauncher-rust1.exe"
+                find src-tauri/target -name 'mclauncher-rust1.exe' 2>/dev/null | head -20
+                exit 1
+              fi
+              cp "$B/mclauncher-rust1.exe" "out/${{ matrix.portable_name }}"
+              # NSIS / MSI（若有）
+              if compgen -G "$B/bundle/nsis/*.exe" > /dev/null; then
+                for f in "$B"/bundle/nsis/*.exe; do
+                  base=$(basename "$f")
+                  # 区分架构：x86 产物加 -x86 后缀，避免与 x64 混淆
+                  if [[ "${{ matrix.artifact_name }}" == *x86* ]]; then
+                    cp "$f" "out/${base%.exe}-x86.exe"
+                  else
+                    cp "$f" "out/$base"
+                  fi
+                done
+              fi
+              if compgen -G "$B/bundle/msi/*.msi" > /dev/null; then
+                for f in "$B"/bundle/msi/*.msi; do
+                  base=$(basename "$f")
+                  if [[ "${{ matrix.artifact_name }}" == *x86* ]]; then
+                    cp "$f" "out/${base%.msi}-x86.msi"
+                  else
+                    cp "$f" "out/$base"
+                  fi
+                done
+              fi
+              ;;
             ubuntu-*)
               cp $B/bundle/appimage/*.AppImage out/ || true
               cp $B/bundle/deb/*.deb out/ || true
-              cp "$B/mclauncher-rust1" out/MCLauncher-linux-x64 || true ;;
+              cp "$B/mclauncher-rust1" "out/${{ matrix.portable_name }}" || true
+              ;;
             macos-*)
               cp $B/bundle/dmg/*.dmg out/ || true
-              (cd $B/bundle/macos && zip -qry "$GITHUB_WORKSPACE/out/MCLauncher-macos.app.zip" *.app) || true ;;
+              (cd $B/bundle/macos && zip -qry "$GITHUB_WORKSPACE/out/MCLauncher-macos.app.zip" *.app) || true
+              ;;
           esac
+          echo "==== out/ ===="
           ls -la out
+          # Windows 必须至少有 portable
+          if [[ "${{ matrix.platform }}" == windows-* ]]; then
+            test -f "out/${{ matrix.portable_name }}"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mclauncher-${{ matrix.platform }}
+          name: ${{ matrix.artifact_name }}
           path: out/*
           if-no-files-found: error

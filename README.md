@@ -104,7 +104,8 @@ jar 首次会尝试从 BMCLAPI authlib-injector 镜像缓存到 `melody-launcher
 
 | 平台 | 产物 | 备注 |
 |------|------|------|
-| Windows | NSIS / MSI + `release` 目录下可执行文件 | 需要 WebView2；CI 使用 Evergreen bootstrapper 配置，也可另下运行时 |
+| Windows x64 | NSIS / MSI + `MCLauncher-portable-windows-x64.exe` | 需要 WebView2；CI 使用 Evergreen bootstrapper |
+| Windows x86（32 位） | NSIS + `MCLauncher-portable-windows-x86.exe` | 同上；CI 目标 `i686-pc-windows-msvc` |
 | Linux | AppImage / deb | AppImage 相对接近「单文件」分发 |
 | macOS | `.app` / dmg | 非单一裸二进制 |
 
@@ -112,7 +113,7 @@ Tauri 应用依赖系统 WebView，无法在所有平台做到「绝对零依赖
 
 ## GitHub Actions
 
-`.github/workflows/build.yml`：`windows-latest` / `ubuntu-latest` / `macos-latest` 矩阵，使用 `tauri-apps/tauri-action`，并上传 artifacts。CI 第一步会跑 `scripts/fetch-assets.sh` 拉取背景与 UI 小图。
+`.github/workflows/build.yml`：矩阵含 **Windows x64**、**Windows x86（i686）**、Ubuntu、macOS，使用 `tauri-apps/tauri-action`，artifacts 名为 `mclauncher-windows-x64` / `mclauncher-windows-x86` / `mclauncher-linux-x64` / `mclauncher-macos`。CI 第一步会跑 `scripts/fetch-assets.sh` 拉取背景与 UI 小图。
 
 ## 路线图
 
